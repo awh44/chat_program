@@ -15,8 +15,8 @@
 #define IP_ADDRESS "127.0.0.1" 
 #define MAX_COMMAND_LENGTH 16
 
-void process(char * message);
-void roll(char * message, int num_pos);
+char * process(char * message);
+char * roll(char * message, int num_pos);
 
 int main(int argc, char ** argv){
 	int sockfd, newfd, err_ret;
@@ -60,7 +60,12 @@ int main(int argc, char ** argv){
 			bytesRecv = recv(newfd, option, sizeof(option), 0);
 
 			if(bytesRecv < 0){
-				process(option);
+				char * response = process(option);
+				int status = send(newfd , response, sizeof(response),0);
+				if(status < 0){
+					fprintf(stdout, "Error sending Message");
+					return errno;
+				}
 			}else{
 				break;
 			}
@@ -69,14 +74,14 @@ int main(int argc, char ** argv){
 }
 
 
-void process(char * message)
+char * process(char * message)
 {
 	if (message == NULL)
 		return;
 
 	if (message[0] != '/')
 	{
-		printf("%s", message);
+		return message;
 	}
 	else
 	{
@@ -90,7 +95,11 @@ void process(char * message)
 		command[i - 1] = '\0';
 		if (strcmp(command, "me") == 0)
 		{
-			printf("Austin	%s\n", &message[i+1]);	
+			char * retVal = (char *)malloc(sizeof(char)*(MAX_COMMAND_LENGTH+30));
+			retVal[0]='\0';
+			strcat(retVal, "Austin ");
+			strcat(retVal, message);
+			return retVal;
 		}
 		else if(strcmp(command, "roll") == 0)	
 		{	
@@ -99,7 +108,7 @@ void process(char * message)
 	}
 }
 
-void roll(char *message, int num_pos)
+char * roll(char *message, int num_pos)
 {
 	char number[MAX_COMMAND_LENGTH];
 	int j = num_pos;
@@ -111,5 +120,9 @@ void roll(char *message, int num_pos)
 	number[j - num_pos] = '\0';
 	int num = atoi(number);
 	int rand_num = (rand() % num) + 1;
-	printf("Austin rolled a %d\n", rand_num);
+	char * result = (char *)malloc(sizeof(char)*(MAX_COMMAND_LENGTH+30));
+	result[0] = '\0';
+	strcat(result, "Austin rolled a ");
+	strcat(result, number); 
+	return result;
 }
