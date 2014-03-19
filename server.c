@@ -119,7 +119,6 @@ void * user_handler(void * user){
 			//If the name is already taken, try again
 			//(note:) Send taken to the user, so the client
 				//Will know to prompt the user for a new name
-			printf("%s\n", node->userInfo->name);
 			if(strcmp(node->userInfo->name, name) == 0){
 				strcpy(buffer, "taken");
 				Send(info->sockfd, buffer);
@@ -266,13 +265,13 @@ void execute_command(struct UserInfo * info, char * buffer){
 		message[0] = '\0';
 		strcat(message, info->name);
 		strcat(message, " ");
-		char * temp = strtok(NULL, " " );
-		if(temp != NULL){
+		char * temp;
+ 		while( (temp = strtok(NULL, " " )) != NULL){
 			strcat(message, temp);
-			if(message != NULL){
+			strcat(message, " ");
+		}
+		if(message != NULL){
 				Send(info->sockfd, message);
-			}
-	
 		}
 	}
 }
