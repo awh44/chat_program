@@ -15,9 +15,9 @@
 #define NAMELEN 32
 
 struct UserInfo{
-	pthread_t thread_Num; //Users thread pointer
+	pthread_t thread_num; //Users thread pointer
 	int sockfd; //File Descripter for user
-	char name[NAMELEN]; //Name for the user
+	char *name; //Name for the user
 };
 
 struct UserNode{
@@ -26,15 +26,14 @@ struct UserNode{
 };
 
 void Send(int sockfd, char * buffer);
-void add_user(UserNode node, UserInfo info);
-void remove_user(UserNode node, UserInfo delInfo);
-int compare(UserInfo user1, UserInfo user2);
+void add_user(struct UserNode * node, struct UserInfo * info);
+void remove_user(struct UserNode * node, struct UserInfo * delInfo);
 int userListSize;
 struct UserInfo users[USERS];
-struct UserNode userList;
+struct UserNode  * userList;
 pthread_mutex_t clientListMutex;
 void * user_handler(void * user);
-void execute_command(int fd, char * cmd);
+void execute_command(struct UserInfo * user, char * cmd);
 
 int main()
 {
@@ -42,13 +41,14 @@ int main()
 	struct sockaddr_in cad;
 	int welcomeSocket, connectionSocket, clilen;
 	
+	userList = (struct UserNode *)malloc(sizeof(struct UserNode));
 	userList->next = NULL;
 	userList->userInfo = NULL;
 
 	int port = 9034;
 	srand(time(NULL));
 	if((welcomeSocket = socket(PF_INET, SOCK_STREAM, 0)) == -1){
-		printf(stderr, "Failed to make Socket");
+		fprintf(stderr, "Failed to make Socket\n");
 		return errno;
 	}
 	memset((char *) &sad, 0, sizeof(sad));
@@ -56,12 +56,12 @@ int main()
 	sad.sin_addr.s_addr = INADDR_ANY;
 	sad.sin_port = htons((u_short) port);
 	if(bind(welcomeSocket, (struct sockaddr *) &sad, sizeof(sad))==-1){
-		printf(stderr, "Failed to bind Socket");
+		fprintf(stderr, "Failed to bind Socket\n");
 		return errno;
 	}
 
 	if (listen(welcomeSocket, WAITING) < 0)
-		printf("Too many clients attempting to connect");
+		printf("Too many clients attempting to connect\n");
 	clilen = sizeof(cad);
 
 	char buffer[128];
@@ -70,31 +70,40 @@ int main()
 	while (1)
 	{	
 		connectionSocket = accept(welcomeSocket, (struct sockaddr *) &cad, &clilen);
-		if(clientListSize > USERS){
+		if(userListSize > USERS){
 			fprintf(stderr, "Connection full, request rejected...\n");
 			close(connectionSocket);
 			continue;
 		}else{
 			fprintf(stdout, "CONNECTION ACCEPTED!\n");
-			struct UserInfo user;
-			info->sockfd = connectionSocket;
+			struct UserInfo * user = (struct UserInfo *)malloc(sizeof(struct UserInfo));
+			user->sockfd = connectionSocket;
 			pthread_mutex_lock(&clientListMutex);
 			add_user(userList, user);
 			pthread_mutex_unlock(&clientListMutex);
-			pthread_create(&user.thread_num, NULL, client_handler, (void *) &user);
+			pthread_create(&user->thread_num, NULL, user_handler, (void *)user);
 		}
 	}
 
 	close(welcomeSocket);
+	//Free our User List
+	struct UserNode * curr;
+	for(curr = userList; curr != NULL; ){
+		struct UserNode * temp = curr;
+		curr = curr->next;
+		free(temp);
+	}
 
 	return 0;
 }
 
 void * user_handler(void * user){
+	printf("Started User Handler Thread\n");
 	struct UserInfo * info = (struct UserInfo *)user;
 	struct UserNode * node;
 	int recBytes, sentBytes;
 	bool userNameChosen = false;
+	bool userNameTaken = false;
 
 	char name[NAMELEN];
 	char buffer[BUFFSIZE];
@@ -102,43 +111,67 @@ void * user_handler(void * user){
 	//If it is, then we keep checking until they give one that isn't taken
 	while(!userNameChosen){
 		//Get name from server
-		recBytes = recv(info->sockfd, name, sizeof(name));
+		recBytes = recv(info->sockfd, name, sizeof(name), 0);
 
 		//Go through the list of clients
 		pthread_mutex_lock(&clientListMutex);
-		for(node = UserList.head; node != NULL; node = node->next){
+		for(node = userList; node != NULL; node = node->next){
 			//If the name is already taken, try again
 			//(note:) Send taken to the user, so the client
 				//Will know to prompt the user for a new name
-			if(strcmp(curr->userInfo->name, name) == 0){
+			printf("%s\n", node->userInfo->name);
+			if(strcmp(node->userInfo->name, name) == 0){
 				strcpy(buffer, "taken");
 				Send(info->sockfd, buffer);
 				pthread_mutex_unlock(&clientListMutex);
-				continue;
+				userNameTaken = true;
+				break;
 			}
 		}
 		//Add UserName to User Information, Notify client
-		info->name = name;
-		strcpy(buffer, "success");
-		Send(info->sockfd, buffer);
-		pthread_mutex_unlock(&clientListMutex);
-		userNameChosen = true;
+		if(!userNameTaken){
+			info->name = name;
+			strcpy(buffer, "success");
+			Send(info->sockfd, buffer);
+			pthread_mutex_unlock(&clientListMutex);
+			userNameChosen = true;
+		}else{
+			userNameTaken = false;
+		}
 	}
 
 	while(1){
-		recBytes = recv(info->sockfd, buffer, sizeof(buffer));
+		char * ptr = buffer;
+		int remBytes = BUFFSIZE;
+/*		while((recBytes = recv(info->sockfd, ptr, remBytes,0)) > 0){
+			printf("Current Buffer: %s\n", ptr);
+			remBytes-=recBytes;
+			ptr+=recBytes;
+		} */
+
+		recBytes = recv(info->sockfd, buffer, sizeof(buffer),0);
+
+		printf("Final Buffer: %s\n", buffer);
+
+		//If it's quit command, exit
 		if(!strcmp(buffer, "/quit")){
-			delete_user(&userList, info);
+			pthread_mutex_lock(&clientListMutex);
+			remove_user(userList, info);
+			pthread_mutex_unlock(&clientListMutex);
 			break;
+			//If it's a command, execute it
 		}else if(buffer[0] == '/'){
 			execute_command(info, &buffer[1]);
+		//Else, send to all users
 		}else{
 			pthread_mutex_lock(&clientListMutex);
-			for(node = UserList.head; node != NULL; node = node->next;){
-				Send(node->sockfd, buffer);
+			for(node = userList; node != NULL; node = node->next ){
+				Send(node->userInfo->sockfd, buffer);
 			}
 			pthread_mutex_unlock(&clientListMutex);
 		}
+		//Reset the buffer
+		memset(buffer, 0, sizeof(buffer));
 	}
 
 	close(info->sockfd);
@@ -146,7 +179,7 @@ void * user_handler(void * user){
 
 }
 
-void execute_command(UserInfo info, char * buffer){
+void execute_command(struct UserInfo * info, char * buffer){
 	char * command = strdup(buffer);
 	char * token = strtok(command, " ");
 	
@@ -155,8 +188,8 @@ void execute_command(UserInfo info, char * buffer){
 		//ROLL BABY ROLL
 		char * nextToken = strtok(NULL, " ");
 		if(nextToken != NULL){
-			-char buffer2[BUFFSIZE];
-			buffer2[0] = "\0";
+			char buffer2[BUFFSIZE];
+			buffer2[0] = '\0';
 			char * c_numDice = strtok(NULL, "d");
 			char * c_numOnDice = strtok(NULL, "d");
 
@@ -164,23 +197,34 @@ void execute_command(UserInfo info, char * buffer){
 			if(c_numDice != NULL && (numDice = atoi(c_numDice)) != 0){
 				if(c_numOnDice != NULL && (numOnDice = atoi(c_numOnDice)) != 0){
 					int i, total, curr = 0;
+					char * istr = malloc(sizeof(char)*3);
+					char * cRand = malloc(sizeof(char)*3);
 					//Show the dice rolls
 					for(i = 1; i <= numDice; i++){
 						curr = rand()%numOnDice;
 						strcat(buffer2, "Roll ");
-						strcat(buffer2, itoa(i));
+						//DO STUFF HERE ITOA
+						sprintf(istr, "%d", i);
+						strcat(buffer2, istr);
 						strcat(buffer2, ": ");
-						strcat(buffer2, itoa(rand()%curr));
+						//DO STUFF HERE ITOA
+						sprintf(cRand, "%d", curr);
+						strcat(buffer2, cRand);
 						strcat(buffer2, "\n");
 						total += curr;
 					}
 					//Print out the total
 					strcat(buffer2, "Total: ");
-					strcat(buffer2, itoa(total));
+					char * cTotal = malloc(sizeof(char)*5);
+					sprintf(cTotal, "%d", total);
+					strcat(buffer2, cTotal);
 					strcat(buffer2, "\n");
 
 					//Send the result
-					Send(info->sockfd, buffer2);
+					struct UserNode * node;
+					for(node = userList; node != NULL; node = node->next ){
+						Send(node->userInfo->sockfd, buffer);
+					}
 				}
 			}
 	
@@ -191,14 +235,15 @@ void execute_command(UserInfo info, char * buffer){
 		
 		char * whispName = strtok(NULL, " ");
 		if(whispName != NULL){	
-			for(node = UserList.head; node != NULL; node = node->next){
+			struct UserNode * node;
+			for(node = userList; node != NULL; node = node->next){
 				//If the name is actually there, send them the 
 					//message, otherwise, send them 
 					//that they failed miserably
-				if(!strcmp(curr->userInfo->name, whispName)){
+				if(!strcmp(node->userInfo->name, whispName)){
 					char * message = strtok(NULL, " ");
 					if(message != NULL){
-						Send(curr->fd, message);
+						Send(node->userInfo->sockfd, message);
 					}
 					break;
 				}
@@ -207,26 +252,30 @@ void execute_command(UserInfo info, char * buffer){
 	}else if(!strcmp(token, "me")){
 		//Just prepending client's name to message
 		char message[BUFFSIZE];
-		message[0] = "\0";
+		message[0] = '\0';
 		strcat(message, info->name);
 		strcat(message, " ");
-		char * temp = strtok(NULL, " " ):
+		char * temp = strtok(NULL, " " );
 		if(temp != NULL){
 			strcat(message, temp);
 			if(message != NULL){
 				Send(info->sockfd, message);
 			}
+	
+		}
 	}
 }
 
 void Send(int sockfd, char * buffer){
 	if(send(sockfd, buffer, sizeof(buffer), 0) < 0){
-		printf(stderr, "Error sending information");
+		fprintf(stderr, "Error sending information\n");
 	}
 }
 
-void add_user(UserNode head, UserInfo user){
-	UserNode curr = head;
+void add_user(struct UserNode * head, struct UserInfo * user){
+	printf("ADDING USER\n");
+	struct UserNode * curr = head;
+	user->name = "Anonymous";
 
 	if(curr->userInfo == NULL){
 		curr->userInfo = user;
@@ -234,30 +283,32 @@ void add_user(UserNode head, UserInfo user){
 		while(curr->next != NULL){
 			curr = curr->next;
 		}
-		curr->next = (UserNode *)malloc(sizeof(UserNode));
+		curr->next = (struct UserNode *)malloc(sizeof(struct UserNode));
 		curr = curr->next;
 		curr->userInfo = user;
-		userListSize--;
+		userListSize++;
 	}
 }
 
-void remove_user(UserNode * head, UserInfo user){
-	UserNode * curr = head;
+void remove_user(struct UserNode * head, struct UserInfo * user){
+	struct UserNode * curr = head;
 
-	if(curr->userInfo->sockfd = user->sockfd){
-		UserNode temp = curr;
+	if(curr->userInfo->sockfd == user->sockfd){
+		printf("Removing user: %s", curr->userInfo->name);
+		struct UserNode * temp = curr;
 		head = curr->next;
 		free(temp);
 		userList = head;
 	}
 	
-	UserNode * prev = head;
+	struct UserNode * prev = head;
 	curr = head->next;
 
 	while(curr != NULL){
 		if(curr->userInfo->sockfd == user->sockfd){
+			printf("Removing user: %s", curr->userInfo->name);
 			prev->next = curr->next;
-			userListSize++;
+			userListSize--;
 			free(curr);
 			break;
 		}
