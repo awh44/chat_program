@@ -25,62 +25,87 @@ struct UserNode{
 	struct UserNode * next; //Pointer to the next user in the list
 };
 
-void Send(int sockfd, char * buffer);
-void add_user(struct UserNode * node, struct UserInfo * info);
+void Send(int sockfd, char * buffer); //Wrapper for send method
+//Add user to list
+void add_user(struct UserNode * node, struct UserInfo * info); 
+//Remove user from user list
 void remove_user(struct UserNode * node, struct UserInfo * delInfo);
+//current size of user list
 int userListSize;
-struct UserInfo users[USERS];
+//head of list of users
 struct UserNode  * userList;
+//Mutex for locking list when it is being manipulated
 pthread_mutex_t clientListMutex;
+//Function pointer (Function that thread is using to handle user input)
 void * user_handler(void * user);
+//Helper function to execute server functions
 void execute_command(struct UserInfo * user, char * cmd);
 
 int main()
 {
+	//Information for initial socket
 	struct sockaddr_in sad;
 	struct sockaddr_in cad;
 	int welcomeSocket, connectionSocket, clilen;
 	
+	//Initialize user list
 	userList = (struct UserNode *)malloc(sizeof(struct UserNode));
 	userList->next = NULL;
 	userList->userInfo = NULL;
-
-	int port = 9034;
+	
+	//Randomize the random number generator
 	srand(time(NULL));
+
+	//Port for chat program
+	int port = 9034;
+
+	//Initialize socket that is listening for users
 	if((welcomeSocket = socket(PF_INET, SOCK_STREAM, 0)) == -1){
 		fprintf(stderr, "Failed to make Socket\n");
 		return errno;
 	}
+
+	//Set address to 0
 	memset((char *) &sad, 0, sizeof(sad));
+
+	//Settings for the socket
 	sad.sin_family = AF_INET;
 	sad.sin_addr.s_addr = INADDR_ANY;
 	sad.sin_port = htons((u_short) port);
+
+	//Bind the socket (make it use the port given)
 	if(bind(welcomeSocket, (struct sockaddr *) &sad, sizeof(sad))==-1){
 		fprintf(stderr, "Failed to bind Socket\n");
 		return errno;
 	}
 
+	//Listen for clients
 	if (listen(welcomeSocket, WAITING) < 0)
 		printf("Too many clients attempting to connect\n");
+	
+	//length of client address
 	clilen = sizeof(cad);
-
-	char buffer[128];
-	strcpy(buffer, "Hello!");
 
 	while (1)
 	{	
+		//Continue accepting users that connect
 		connectionSocket = accept(welcomeSocket, (struct sockaddr *) &cad, &clilen);
+		//Disconnect user if there are too many Connected
 		if(userListSize > USERS){
 			fprintf(stderr, "Connection full, request rejected...\n");
 			close(connectionSocket);
 			continue;
 		}else{
 			fprintf(stdout, "CONNECTION ACCEPTED!\n");
+			//Create user for the spawning thread
 			struct UserInfo * user = (struct UserInfo *)malloc(sizeof(struct UserInfo));
 			user->sockfd = connectionSocket;
+			//Lock the mutex, because we are adding a client to the list
 			pthread_mutex_lock(&clientListMutex);
 			add_user(userList, user);
 			pthread_mutex_unlock(&clientListMutex);
+
+			//Spawn a thread to handle user output
 			pthread_create(&user->thread_num, NULL, user_handler, (void *)user);
 		}
 	}
@@ -139,12 +164,16 @@ void * user_handler(void * user){
 		}
 	}
 
+	//Recieve and parse input from the client until they disconnect
 	while(1){
 		char * ptr = buffer;
 		int remBytes = BUFFSIZE;
 
+		//Recieive input from the client 
 		recBytes = recv(info->sockfd, buffer, sizeof(buffer),0);
-		
+	
+
+		//Check to see if the client disconnected	
 		if(!recBytes){
 			printf("Connection lost from %s\n", info->name);
 			pthread_mutex_lock(&clientListMutex);
@@ -154,6 +183,7 @@ void * user_handler(void * user){
 		}
 		//If it's quit command, exit
 		if(!strcmp(buffer, "/quit")){
+			//Lock mutex, because we're removing a user
 			pthread_mutex_lock(&clientListMutex);
 			remove_user(userList, info);
 			pthread_mutex_unlock(&clientListMutex);
@@ -163,10 +193,13 @@ void * user_handler(void * user){
 			execute_command(info, &buffer[1]);
 		//Else, send to all users
 		}else{
+			//Lock the mutex, because we're traversing the user List
 			pthread_mutex_lock(&clientListMutex);
 			for(node = userList; node != NULL; node = node->next ){
 				char * userMessage = (char *) malloc(sizeof(char)*BUFFSIZE);
 				userMessage[0] = '\0';
+				//Send the user's message -> put their name in the front so
+				//other users will know who sent it
 				strcat(userMessage, info->name);
 				strcat(userMessage, ": ");
 				strcat(userMessage, buffer);
@@ -179,6 +212,7 @@ void * user_handler(void * user){
 		memset(buffer, 0, sizeof(buffer));
 	}
 
+	//User disconnected, so we close the socket
 	printf("Say goodbye to %d\n", info->sockfd);
 	close(info->sockfd);
 	return NULL;
@@ -194,25 +228,28 @@ void execute_command(struct UserInfo * info, char * buffer){
 		printf("ROLL BABY ROLL\n");
 		char buffer2[BUFFSIZE];
 		buffer2[0] = '\0';
+		//because the numbers are separated by d, get the two tokens
 		char * c_numDice = strtok(NULL, "d");
 		char * c_numOnDice = strtok(NULL, "d");
 		int numDice, numOnDice;
+
+		//parse the two numbers separated by d -> if they aren't numbers,
+		//don't send anything
 		if(c_numDice != NULL && (numDice = atoi(c_numDice)) != 0){
 			if(c_numOnDice != NULL && (numOnDice = atoi(c_numOnDice)) != 0){
-				printf("Number of dice: %d\n", numDice);
-				printf("Sides on dice: %d\n", numOnDice);
 				int i = 0, total = 0, curr = 0;
+				//Strings holding the value of the die and random number
 				char * istr = malloc(sizeof(char)*3);
 				char * cRand = malloc(sizeof(char)*3);
 				//Show the dice rolls
 				for(i = 1; i <= numDice; i++){
+					//Number between 1 and the sides of the dice the user input
 					curr = (rand()%numOnDice)+1;
+					//Prettify the output
 					strcat(buffer2, "Roll ");
-					//DO STUFF HERE ITOA
 					sprintf(istr, "%d", i);
 					strcat(buffer2, istr);
 					strcat(buffer2, ": ");
-					//DO STUFF HERE ITOA
 					sprintf(cRand, "%d", curr);
 					strcat(buffer2, cRand);
 					strcat(buffer2, "\n");
@@ -220,17 +257,25 @@ void execute_command(struct UserInfo * info, char * buffer){
 				}
 				//Print out the total
 				strcat(buffer2, "Total: ");
+				//String holder for total number
 				char * cTotal = malloc(sizeof(char)*5);
 				sprintf(cTotal, "%d", total);
 				strcat(buffer2, cTotal);
 				strcat(buffer2, "\n");
-				//Send the result
+				//Print the Dice rolls to the server -> for debugging purposes
 				printf("Dice Rolls\n%s\n", buffer2);
+				//Send the result to all users	
 				struct UserNode * node;
+				pthread_mutex_lock(&clientListMutex);
 				for(node = userList; node != NULL; node = node->next ){
 					printf("Sending rolls to: %s\n", node->userInfo->name);
 					Send(node->userInfo->sockfd, buffer2);
 				}
+				pthread_mutex_unlock(&clientListMutex);
+				//Free the allocated memory
+				free(cTotal);
+				free(istr);
+				free(cRand);
 			}
 		}
 	//EXPECTED INPUT /whisper bob Hello
@@ -248,6 +293,7 @@ void execute_command(struct UserInfo * info, char * buffer){
 					char * message = strtok(NULL, " ");
 			
 					if(message != NULL){
+						//Expected Output -> "(User) Whispers: (message)"
 						char * userMessage = (char *)malloc(sizeof(char)*BUFFSIZE);
 						userMessage[0] = '\0';
 						strcat(userMessage, info->name);
@@ -266,12 +312,19 @@ void execute_command(struct UserInfo * info, char * buffer){
 		strcat(message, info->name);
 		strcat(message, " ");
 		char * temp;
+		//Get the rest of the action
  		while( (temp = strtok(NULL, " " )) != NULL){
 			strcat(message, temp);
 			strcat(message, " ");
 		}
 		if(message != NULL){
-				Send(info->sockfd, message);
+				//Send the action to all users currently on the server
+				pthread_mutex_lock(&clientListMutex);
+				struct UserNode * node;
+				for(node = userList; node != NULL; node = node->next ){
+					Send(info->sockfd, message);
+				}
+				pthread_mutex_unlock(&clientListMutex);
 		}
 	}
 }
