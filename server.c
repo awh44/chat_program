@@ -145,7 +145,14 @@ void * user_handler(void * user){
 		int remBytes = BUFFSIZE;
 
 		recBytes = recv(info->sockfd, buffer, sizeof(buffer),0);
-
+		
+		if(!recBytes){
+			printf("Connection lost from %s\n", info->name);
+			pthread_mutex_lock(&clientListMutex);
+			remove_user(userList, info);
+			pthread_mutex_unlock(&clientListMutex);
+			break;
+		}
 		//If it's quit command, exit
 		if(!strcmp(buffer, "/quit")){
 			pthread_mutex_lock(&clientListMutex);
@@ -173,6 +180,7 @@ void * user_handler(void * user){
 		memset(buffer, 0, sizeof(buffer));
 	}
 
+	printf("Say goodbye to %d\n", info->sockfd);
 	close(info->sockfd);
 	return NULL;
 
@@ -199,7 +207,7 @@ void execute_command(struct UserInfo * info, char * buffer){
 				char * cRand = malloc(sizeof(char)*3);
 				//Show the dice rolls
 				for(i = 1; i <= numDice; i++){
-					curr = rand()%numOnDice;
+					curr = (rand()%numOnDice)+1;
 					strcat(buffer2, "Roll ");
 					//DO STUFF HERE ITOA
 					sprintf(istr, "%d", i);
@@ -297,11 +305,12 @@ void remove_user(struct UserNode * head, struct UserInfo * user){
 	struct UserNode * curr = head;
 
 	if(curr->userInfo->sockfd == user->sockfd){
-		printf("Removing user: %s", curr->userInfo->name);
+		printf("Removing user: %s\n", curr->userInfo->name);
 		struct UserNode * temp = curr;
 		head = curr->next;
 		free(temp);
 		userList = head;
+		return;
 	}
 	
 	struct UserNode * prev = head;
