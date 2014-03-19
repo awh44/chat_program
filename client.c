@@ -12,8 +12,14 @@
 void *get_messages(void *args);
 void print_commands();
 
-int main()
+int main(int argc, char *argv[])
 {
+	if (argc < 2)
+	{
+		printf("Please include the URL of the server you would like to connect to as a command line argument.\n");
+		return 1;
+	}
+
 	//Establish the connection to the server--------------------------------
 	struct sockaddr_in sad;
 	int clientSocket;
@@ -21,7 +27,7 @@ int main()
 	struct hostent *ptrh;
 
 	char host[BUFFER_SIZE];
-	strcpy(host, "tux64-11.cs.drexel.edu");
+	strcpy(host, argv[1]);
 
 	printf("Connecting to server...\n");
 
@@ -80,6 +86,7 @@ int main()
 	int chars_read = BUFFER_SIZE;
 	do
 	{
+		printf("%s> ", username);
 		chars_read = getline(&user_input, &chars_read, stdin);
 		if (strcmp(user_input, "/cmd\n") == 0)
 		{
@@ -92,6 +99,7 @@ int main()
 	} while (strcmp(user_input, "/quit\n") != 0);
 	//----------------------------------------------------------------------
 
+	free(user_input);
 	close(clientSocket);
 
 	return 0;
