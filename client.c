@@ -12,8 +12,14 @@
 void *get_messages(void *args);
 void print_commands();
 
-int main()
+int main(int argc, char *argv[])
 {
+	if (argc < 2)
+	{
+		printf("Please include the URL of the server you would like to connect to as a command line argument.\n");
+		return 1;
+	}
+
 	//Establish the connection to the server--------------------------------
 	struct sockaddr_in sad;
 	int clientSocket;
@@ -21,7 +27,7 @@ int main()
 	struct hostent *ptrh;
 
 	char host[BUFFER_SIZE];
-	strcpy(host, "tux64-11.cs.drexel.edu");
+	strcpy(host, argv[1]);
 
 	printf("Connecting to server...\n");
 
@@ -37,7 +43,7 @@ int main()
 	if (connect(clientSocket, (struct sockaddr *) &sad, sizeof(sad)) < 0)
 	{
 		printf("Error: couldn't connect to host\n");
-		close(clientSocket);
+		//close(clientSocket);
 		return 5;
 	}
 
@@ -49,16 +55,30 @@ int main()
 	printf("What would you like your username to be? (No spaces, < 128 characters)\n");
 	char username[BUFFER_SIZE];
 	scanf("%s", username);
+	//send the desired username to the server
 	write(clientSocket, username, sizeof(username));
 	
 	char from_server[BUFFER_SIZE];
-	read(clientSocket, from_server, sizeof(from_server));
-	while (strcmp(from_server, "taken") == 0)
+	//read from the server to determine its response
+	if (read(clientSocket, from_server, sizeof(from_server)) < 0)
+	{
+		printf("Error in reading from the server.\n");
+		close(clientSocket);
+		return 15;
+	}
+	//if the username was taken (indicated by receiving "t" from the server),
+	//have the user try another
+	while (strcmp(from_server, "t") == 0)
 	{
 		printf("Sorry, that username is already taken. Please try another.\n");
 		scanf("%s", username);
 		write(clientSocket, username, sizeof(username));
-		read(clientSocket, from_server, sizeof(from_server));
+		if (read(clientSocket, from_server, sizeof(from_server)) < 0)
+		{
+			printf("Error in reading from the server.\n");
+			close(clientSocket);
+			return 15;
+		}
 	}
 	//----------------------------------------------------------------------
 
@@ -80,19 +100,29 @@ int main()
 	int chars_read = BUFFER_SIZE;
 	do
 	{
+		//read the user's input, store the number of characters read
 		chars_read = getline(&user_input, &chars_read, stdin);
+		//determine if they want the command printed
 		if (strcmp(user_input, "/cmd\n") == 0)
 		{
 			print_commands();
 		}
 		else
 		{
+			//if not, write the user's input to the server; note that, because
+			//getline is used, it includes the trailing '\n'
 			write(clientSocket, user_input, chars_read);
 		}
 	} while (strcmp(user_input, "/quit\n") != 0);
 	//----------------------------------------------------------------------
 
+	//clean up--------------------------------------------------------------
+	free(user_input);
+	//make sure to kill the thread before closing socket so that this thread
+	//isn't switched out for the other and data read from the server
+	pthread_kill(msg_thread);
 	close(clientSocket);
+	//----------------------------------------------------------------------
 
 	return 0;
 }
@@ -101,7 +131,12 @@ void *get_messages(void *args)
 {
 	//get the value of the shared file descriptor for the clientSocker
 	int clientSocket = (intptr_t) args;
-	//continually read from the server
+
+	//continuously read from the server and print out what is received;
+	//because TCP is being used, it is assured that that all data will be
+	//received in the correct order; because no formatting is done, data is
+	//only read and then printed it, it does not matter how many bytes are
+	//read on each iteration, just that they are printed
 	while (1)
 	{
 		char from_server[BUFFER_SIZE + 1];
