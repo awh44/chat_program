@@ -143,15 +143,8 @@ void * user_handler(void * user){
 	while(1){
 		char * ptr = buffer;
 		int remBytes = BUFFSIZE;
-/*		while((recBytes = recv(info->sockfd, ptr, remBytes,0)) > 0){
-			printf("Current Buffer: %s\n", ptr);
-			remBytes-=recBytes;
-			ptr+=recBytes;
-		} */
 
 		recBytes = recv(info->sockfd, buffer, sizeof(buffer),0);
-
-		printf("Final Buffer: %s\n", buffer);
 
 		//If it's quit command, exit
 		if(!strcmp(buffer, "/quit")){
@@ -166,7 +159,13 @@ void * user_handler(void * user){
 		}else{
 			pthread_mutex_lock(&clientListMutex);
 			for(node = userList; node != NULL; node = node->next ){
-				Send(node->userInfo->sockfd, buffer);
+				char * userMessage = (char *) malloc(sizeof(char)*BUFFSIZE);
+				userMessage[0] = '\0';
+				strcat(userMessage, info->name);
+				strcat(userMessage, ": ");
+				strcat(userMessage, buffer);
+				Send(node->userInfo->sockfd, userMessage);
+				free(userMessage);
 			}
 			pthread_mutex_unlock(&clientListMutex);
 		}
@@ -185,49 +184,47 @@ void execute_command(struct UserInfo * info, char * buffer){
 	
 	//EXPECTED INPUT - /roll 3d10
 	if(!strcmp(token, "roll")){
-		//ROLL BABY ROLL
-		char * nextToken = strtok(NULL, " ");
-		if(nextToken != NULL){
-			char buffer2[BUFFSIZE];
-			buffer2[0] = '\0';
-			char * c_numDice = strtok(NULL, "d");
-			char * c_numOnDice = strtok(NULL, "d");
-
-			int numDice, numOnDice;
-			if(c_numDice != NULL && (numDice = atoi(c_numDice)) != 0){
-				if(c_numOnDice != NULL && (numOnDice = atoi(c_numOnDice)) != 0){
-					int i, total, curr = 0;
-					char * istr = malloc(sizeof(char)*3);
-					char * cRand = malloc(sizeof(char)*3);
-					//Show the dice rolls
-					for(i = 1; i <= numDice; i++){
-						curr = rand()%numOnDice;
-						strcat(buffer2, "Roll ");
-						//DO STUFF HERE ITOA
-						sprintf(istr, "%d", i);
-						strcat(buffer2, istr);
-						strcat(buffer2, ": ");
-						//DO STUFF HERE ITOA
-						sprintf(cRand, "%d", curr);
-						strcat(buffer2, cRand);
-						strcat(buffer2, "\n");
-						total += curr;
-					}
-					//Print out the total
-					strcat(buffer2, "Total: ");
-					char * cTotal = malloc(sizeof(char)*5);
-					sprintf(cTotal, "%d", total);
-					strcat(buffer2, cTotal);
+		printf("ROLL BABY ROLL\n");
+		char buffer2[BUFFSIZE];
+		buffer2[0] = '\0';
+		char * c_numDice = strtok(NULL, "d");
+		char * c_numOnDice = strtok(NULL, "d");
+		int numDice, numOnDice;
+		if(c_numDice != NULL && (numDice = atoi(c_numDice)) != 0){
+			if(c_numOnDice != NULL && (numOnDice = atoi(c_numOnDice)) != 0){
+				printf("Number of dice: %d\n", numDice);
+				printf("Sides on dice: %d\n", numOnDice);
+				int i, total, curr = 0;
+				char * istr = malloc(sizeof(char)*3);
+				char * cRand = malloc(sizeof(char)*3);
+				//Show the dice rolls
+				for(i = 1; i <= numDice; i++){
+					curr = rand()%numOnDice;
+					strcat(buffer2, "Roll ");
+					//DO STUFF HERE ITOA
+					sprintf(istr, "%d", i);
+					strcat(buffer2, istr);
+					strcat(buffer2, ": ");
+					//DO STUFF HERE ITOA
+					sprintf(cRand, "%d", curr);
+					strcat(buffer2, cRand);
 					strcat(buffer2, "\n");
-
-					//Send the result
-					struct UserNode * node;
-					for(node = userList; node != NULL; node = node->next ){
-						Send(node->userInfo->sockfd, buffer);
-					}
+					total += curr;
+				}
+				//Print out the total
+				strcat(buffer2, "Total: ");
+				char * cTotal = malloc(sizeof(char)*5);
+				sprintf(cTotal, "%d", total);
+				strcat(buffer2, cTotal);
+				strcat(buffer2, "\n");
+				//Send the result
+				printf("Dice Rolls\n%s\n", buffer2);
+				struct UserNode * node;
+				for(node = userList; node != NULL; node = node->next ){
+					printf("Sending rolls to: %s\n", node->userInfo->name);
+					Send(node->userInfo->sockfd, buffer2);
 				}
 			}
-	
 		}
 	//EXPECTED INPUT /whisper bob Hello
 	}else if(!strcmp(token, "whisper")){
@@ -242,8 +239,14 @@ void execute_command(struct UserInfo * info, char * buffer){
 					//that they failed miserably
 				if(!strcmp(node->userInfo->name, whispName)){
 					char * message = strtok(NULL, " ");
+			
 					if(message != NULL){
-						Send(node->userInfo->sockfd, message);
+						char * userMessage = (char *)malloc(sizeof(char)*BUFFSIZE);
+						userMessage[0] = '\0';
+						strcat(userMessage, info->name);
+						strcat(userMessage, " Whispers: ");
+						strcat(userMessage, message);
+						Send(node->userInfo->sockfd, userMessage);
 					}
 					break;
 				}
@@ -267,7 +270,7 @@ void execute_command(struct UserInfo * info, char * buffer){
 }
 
 void Send(int sockfd, char * buffer){
-	if(send(sockfd, buffer, sizeof(buffer), 0) < 0){
+	if(send(sockfd, buffer, strlen(buffer), 0) < 0){
 		fprintf(stderr, "Error sending information\n");
 	}
 }
