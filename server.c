@@ -145,7 +145,7 @@ void * user_handler(void * user){
 			//(note:) Send taken to the user, so the client
 				//Will know to prompt the user for a new name
 			if(strcmp(node->userInfo->name, name) == 0){
-				strcpy(buffer, "taken");
+				strcpy(buffer, "t");
 				Send(info->sockfd, buffer);
 				pthread_mutex_unlock(&clientListMutex);
 				userNameTaken = true;
@@ -163,6 +163,11 @@ void * user_handler(void * user){
 			userNameTaken = false;
 		}
 	}
+	char * intro = (char *)malloc(sizeof(char)*BUFFSIZE);
+	intro[0] = '\0';
+	strcat(intro, info->name);
+	strcat(intro, " joined the chatroom!");
+	Send(info->sockfd, intro);
 
 	//Recieve and parse input from the client until they disconnect
 	while(1){
@@ -340,7 +345,11 @@ void add_user(struct UserNode * head, struct UserInfo * user){
 	struct UserNode * curr = head;
 	user->name = "Anonymous";
 
-	if(curr->userInfo == NULL){
+	if(curr == NULL){
+		curr = (struct UserNode *)malloc(sizeof(struct UserNode));
+		curr->userInfo = user;
+		userList = curr;
+	}else if(curr->userInfo == NULL){
 		curr->userInfo = user;
 	}else{
 		while(curr->next != NULL){
@@ -349,8 +358,8 @@ void add_user(struct UserNode * head, struct UserInfo * user){
 		curr->next = (struct UserNode *)malloc(sizeof(struct UserNode));
 		curr = curr->next;
 		curr->userInfo = user;
-		userListSize++;
 	}
+	userListSize++;
 }
 
 void remove_user(struct UserNode * head, struct UserInfo * user){
