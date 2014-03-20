@@ -152,8 +152,8 @@ void *get_messages(void *args)
 void print_commands()
 {
 	printf("The commands are:\n");
-	printf("/roll [number] - roll die with [number] sides\n");
+	printf("/roll [dice]d[number] - roll [dice] number of [dice] with [number] sides\n");
 	printf("/me [action] - outputs your username as performing the action\n");
-	printf("/whispter [username] [message] - send [message] only to user [username]\n");
+	printf("/whisper [username] [message] - send [message] only to user [username]\n");
 	printf("/quit - quit the program\n");
 }
