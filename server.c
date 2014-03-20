@@ -59,7 +59,7 @@ int main()
 	char * host = (char *)malloc(sizeof(char)*BUFFSIZE);
 	host[0] = '\0';
 	gethostname(host, sizeof(host));
-	printf("%s"\n"\\ host);
+	printf("%s\n", host);
 	//Port for chat program
 	int port = 9034;
 
