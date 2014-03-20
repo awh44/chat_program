@@ -1,5 +1,5 @@
 runClient: client
-	./client
+	./client ${HOST}
 
 client: client.c
 	gcc client.c -o client -lpthread
