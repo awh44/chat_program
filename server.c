@@ -174,9 +174,8 @@ void * user_handler(void * user){
 	
 	//Send welcome to all users
 	pthread_mutex_lock(&clientListMutex);
-	struct UserNode * node;
 	for(node = userList; node != NULL; node = node->next){
-		Send(node->sockfd, intro);
+		Send(node->userInfo->sockfd, intro);
 	}
 	pthread_mutex_unlock(&clientListMutex);
 
@@ -339,7 +338,7 @@ void execute_command(struct UserInfo * info, char * buffer){
 				pthread_mutex_lock(&clientListMutex);
 				struct UserNode * node;
 				for(node = userList; node != NULL; node = node->next ){
-					Send(node->sockfd, message);
+					Send(node->userInfo->sockfd, message);
 				}
 				pthread_mutex_unlock(&clientListMutex);
 		}
