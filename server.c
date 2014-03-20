@@ -56,6 +56,10 @@ int main()
 	//Randomize the random number generator
 	srand(time(NULL));
 
+	char * host = (char *)malloc(sizeof(char)*BUFFSIZE);
+	host[0] = '\0';
+	gethostname(host, sizeof(host));
+	printf("%s\n", host);
 	//Port for chat program
 	int port = 9034;
 
@@ -166,8 +170,14 @@ void * user_handler(void * user){
 	char * intro = (char *)malloc(sizeof(char)*BUFFSIZE);
 	intro[0] = '\0';
 	strcat(intro, info->name);
-	strcat(intro, " joined the chatroom!");
-	Send(info->sockfd, intro);
+	strcat(intro, " joined the chatroom!\n");
+	
+	//Send welcome to all users
+	pthread_mutex_lock(&clientListMutex);
+	for(node = userList; node != NULL; node = node->next){
+		Send(node->userInfo->sockfd, intro);
+	}
+	pthread_mutex_unlock(&clientListMutex);
 
 	//Recieve and parse input from the client until they disconnect
 	while(1){
@@ -304,6 +314,7 @@ void execute_command(struct UserInfo * info, char * buffer){
 						strcat(userMessage, info->name);
 						strcat(userMessage, " Whispers: ");
 						strcat(userMessage, message);
+						strcat(userMessage, "\n");
 						Send(node->userInfo->sockfd, userMessage);
 					}
 					break;
@@ -327,7 +338,7 @@ void execute_command(struct UserInfo * info, char * buffer){
 				pthread_mutex_lock(&clientListMutex);
 				struct UserNode * node;
 				for(node = userList; node != NULL; node = node->next ){
-					Send(info->sockfd, message);
+					Send(node->userInfo->sockfd, message);
 				}
 				pthread_mutex_unlock(&clientListMutex);
 		}
