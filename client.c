@@ -20,6 +20,9 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 
+	//Set up a string which will be used by another function in the program
+	char commands_str[] = "\nThe commands are:\n/roll [dice]d[number] - roll [dice] number of dice with [number] sides\n/me [action] - outputs your username as performing the action\n/whisper [username] [message] - send [message] only to user [username]\n/quit - quit the program\n\n";
+
 	//Establish the connection to the server--------------------------------
 	struct sockaddr_in sad;
 	int clientSocket;
@@ -105,7 +108,7 @@ int main(int argc, char *argv[])
 		//determine if they want the command printed
 		if (strcmp(user_input, "/cmd\n") == 0)
 		{
-			print_commands();
+			print_commands(commands_str);
 		}
 		else
 		{
@@ -149,11 +152,7 @@ void *get_messages(void *args)
 	}
 }
 
-void print_commands()
+void print_commands(char cmd_str[])
 {
-	printf("The commands are:\n");
-	printf("/roll [dice]d[number] - roll [dice] number of [dice] with [number] sides\n");
-	printf("/me [action] - outputs your username as performing the action\n");
-	printf("/whisper [username] [message] - send [message] only to user [username]\n");
-	printf("/quit - quit the program\n");
+	printf("%s", cmd_str);
 }
