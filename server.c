@@ -179,6 +179,8 @@ void * user_handler(void * user){
 	}
 	pthread_mutex_unlock(&clientListMutex);
 
+	free(intro);
+
 	//Recieve and parse input from the client until they disconnect
 	while(1){
 		char * ptr = buffer;
@@ -192,7 +194,15 @@ void * user_handler(void * user){
 		if(!recBytes){
 			printf("Connection lost from %s\n", info->name);
 			pthread_mutex_lock(&clientListMutex);
+			char * remMsg = (char *)malloc(sizeof(char)*BUFFSIZE);
+			remMsg[0] = '\0';
+			strcat(remMsg, info->name);
+			strcat(remMsg, " disconnected from the chat room\n");
 			remove_user(userList, info);
+			struct UserNode * node;
+			for(node = userList; node != NULL; node = node->next){
+				Send(node->userInfo->sockfd, remMsg);
+			}
 			pthread_mutex_unlock(&clientListMutex);
 			break;
 		}
