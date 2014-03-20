@@ -179,6 +179,8 @@ void * user_handler(void * user){
 	}
 	pthread_mutex_unlock(&clientListMutex);
 
+	free(intro);
+
 	//Recieve and parse input from the client until they disconnect
 	while(1){
 		char * ptr = buffer;
@@ -192,7 +194,15 @@ void * user_handler(void * user){
 		if(!recBytes){
 			printf("Connection lost from %s\n", info->name);
 			pthread_mutex_lock(&clientListMutex);
+			char * remMsg = (char *)malloc(sizeof(char)*BUFFSIZE);
+			remMsg[0] = '\0';
+			strcat(remMsg, info->name);
+			strcat(remMsg, " disconnected from the chat room\n");
 			remove_user(userList, info);
+			struct UserNode * node;
+			for(node = userList; node != NULL; node = node->next){
+				Send(node->userInfo->sockfd, remMsg);
+			}
 			pthread_mutex_unlock(&clientListMutex);
 			break;
 		}
@@ -305,7 +315,14 @@ void execute_command(struct UserInfo * info, char * buffer){
 					//message, otherwise, send them 
 					//that they failed miserably
 				if(!strcmp(node->userInfo->name, whispName)){
-					char * message = strtok(NULL, " ");
+					char * message = (char *) malloc(sizeof(char)*BUFFSIZE);
+					message[0] = '\0';
+					char * temp;
+				  	while((temp	= strtok(NULL, " ")) != NULL){
+						strcat(message, temp);
+						strcat(message, " ");
+					}
+					free(temp);
 			
 					if(message != NULL){
 						//Expected Output -> "(User) Whispers: (message)"
@@ -316,8 +333,10 @@ void execute_command(struct UserInfo * info, char * buffer){
 						strcat(userMessage, message);
 						strcat(userMessage, "\n");
 						Send(node->userInfo->sockfd, userMessage);
+						free(userMessage);
 					}
 					break;
+					free(message);
 				}
 			}
 		}
@@ -333,6 +352,7 @@ void execute_command(struct UserInfo * info, char * buffer){
 			strcat(message, temp);
 			strcat(message, " ");
 		}
+		strcat(message, "\n");
 		if(message != NULL){
 				//Send the action to all users currently on the server
 				pthread_mutex_lock(&clientListMutex);
@@ -355,7 +375,7 @@ void add_user(struct UserNode * head, struct UserInfo * user){
 	printf("ADDING USER\n");
 	struct UserNode * curr = head;
 	user->name = "Anonymous";
-
+	
 	if(curr == NULL){
 		curr = (struct UserNode *)malloc(sizeof(struct UserNode));
 		curr->userInfo = user;
