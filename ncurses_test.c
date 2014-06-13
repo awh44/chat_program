@@ -4,7 +4,7 @@
 #define BUFF_SIZE 64;
 #define BACKSPACE 7
 
-char *ncurses_getline();
+int ncurses_getline(char **output, size_t *alloced);
 
 int main()
 {
@@ -15,24 +15,35 @@ int main()
 	noecho();
 	while (1)
 	{
-		char *input = ncurses_getline();
-		printw("%s\n", input);
+		char *line = NULL;
+		size_t size = 0;
+		int chars_read = ncurses_getline(&line, &size);
+		printw("%s\n", line);
 		refresh();
-	}
-
-	getch();	
-	
+	}	
 	
 	endwin();
 
 	return 0;
 }
 
-char *ncurses_getline()
+int ncurses_getline(char **output, size_t *alloced)
 {
-	int alloc_size = BUFF_SIZE;
+	int alloc_size = *alloced;
+	//char *retVal = malloc(alloc_size * sizeof(char));
+
+	if (NULL == *output)
+	{
+		alloc_size = BUFF_SIZE;
+		*output = malloc(alloc_size * sizeof(char));
+		if (NULL == *output)
+		{
+			alloc_size = 0;
+			return 0;
+		}
+	}
+	
 	int needed_size = 2; //one for '\n' and one for '\0'
-	char *retVal = malloc(alloc_size * sizeof(char));
 
 	char input;
 	while ((input = getch()) != '\n')
@@ -58,19 +69,21 @@ char *ncurses_getline()
 			if (needed_size > alloc_size)
 			{
 				alloc_size <<= 1;
-				retVal = realloc(retVal, alloc_size * sizeof(char));
+				*output = realloc(*output, alloc_size * sizeof(char));
 			}
-			retVal[needed_size - 3] = input;
+			(*output)[needed_size - 3] = input;
 			printw("%c", input);
 		}
 		refresh();
 	}
 
-	retVal[needed_size - 2] = '\n';
-	retVal[needed_size - 1] = '\0';
+	(*output)[needed_size - 2] = '\n';
+	(*output)[needed_size - 1] = '\0';
 
-	printw("\n\n");
+	printw("\n");
 	refresh();
 
-	return retVal;
+	*alloced = alloc_size;
+	//subtract one for the null terminator
+	return needed_size - 1;
 }
