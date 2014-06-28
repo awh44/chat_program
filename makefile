@@ -10,10 +10,10 @@ runServer: server
 server: server.c
 	gcc server.c -o server -lpthread
 
-runNcurses:
-	./ncurses_client ${HOST}
+runNcurses: ncurses
+	./ncurses_client tux64-${HOST}.cs.drexel.edu
 
-ncurses:
+ncurses: ncurses_client.c
 	gcc ncurses_client.c -o ncurses_client -lncurses -lpthread
 
 compile: server client ncurses

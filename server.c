@@ -13,6 +13,8 @@
 #define WAITING 10
 #define BUFFSIZE 128
 #define NAMELEN 32
+#define REMMSG_LENGTH 161
+#define INTRO_LENGTH 149
 
 struct UserInfo{
 	pthread_t thread_num; //Users thread pointer
@@ -40,6 +42,8 @@ pthread_mutex_t clientListMutex;
 void * user_handler(void * user);
 //Helper function to execute server functions
 void execute_command(struct UserInfo * user, char * cmd);
+void connection_lost(struct UserInfo * user);
+int get_entire_message(struct UserInfo * info, char **message);
 
 int main()
 {
@@ -56,7 +60,7 @@ int main()
 	//Randomize the random number generator
 	srand(time(NULL));
 
-	char * host = (char *)malloc(sizeof(char)*BUFFSIZE);
+	char host[BUFFSIZE];
 	host[0] = '\0';
 	gethostname(host, BUFFSIZE);
 	printf("%s\n", host);
@@ -167,7 +171,7 @@ void * user_handler(void * user){
 		}
 	}
 	
-	char * intro = (char *)malloc(sizeof(char) * (BUFFSIZE + strlen(" joined the chatroom!")));
+	char intro[INTRO_LENGTH];
 	strcpy(intro, info->name);
 	strcat(intro, " joined the chatroom!\n");
 
@@ -179,38 +183,17 @@ void * user_handler(void * user){
 	}
 	pthread_mutex_unlock(&clientListMutex);
 
-	free(intro);
 	
 	//Recieve and parse input from the client until they disconnect
-	while(1){
-		
-		//Recieive input from the client 
-		recBytes = recv(info->sockfd, buffer, sizeof(buffer),0);
-	
-
-		//Check to see if the client disconnected	
-		if(recBytes < 1){
-			printf("Connection lost from %s\n", info->name);
-			pthread_mutex_lock(&clientListMutex);
-			//could need up to BUFF_SIZE for the name (including '\0'), plus the length of the
-			//extra information
-			char * remMsg = (char *)malloc(sizeof(char)* (BUFFSIZE + strlen(" disconnected from the chat room\n")));
-			strcpy(remMsg, info->name);
-			strcat(remMsg, " disconnected from the chat room\n");
-			remove_user(userList, info);
-			struct UserNode * node;
-			for(node = userList; node != NULL; node = node->next){
-				Send(node->userInfo->sockfd, remMsg);
-			}
-			pthread_mutex_unlock(&clientListMutex);
-			break;
-		}
+	int messageSize = 0;
+	char *message = NULL;
+	while((messageSize = get_entire_message(info, &message)) > 0){
 		//If it's quit command, exit
-		if(!strcmp(buffer, "/quit")){
-			//Lock mutex, because we're removing a user
-			pthread_mutex_lock(&clientListMutex);
-			remove_user(userList, info);
-			pthread_mutex_unlock(&clientListMutex);
+		if(strcmp(buffer, "/quit\n") == 0){
+			printf("User quit\n");
+			connection_lost(info);
+			//indicate to client that it can now disconnect
+			free(message);
 			break;
 			//If it's a command, execute it
 		}else if(buffer[0] == '/'){
@@ -218,31 +201,53 @@ void * user_handler(void * user){
 		//Else, send to all users
 		}else{
 			//Lock the mutex, because we're traversing the user List
+			char *userMessage = (char *) malloc(sizeof(char) * (BUFFSIZE + messageSize));
+			strcpy(userMessage, info->name);
+			strcat(userMessage, ": ");
+			strcat(userMessage, message);
 			pthread_mutex_lock(&clientListMutex);
 			for(node = userList; node != NULL; node = node->next ){
-				char * userMessage = (char *) malloc(sizeof(char)*BUFFSIZE);
-				userMessage[0] = '\0';
-				//Send the user's message -> put their name in the front so
-				//other users will know who sent it
-				strcat(userMessage, info->name);
-				strcat(userMessage, ": ");
-				strcat(userMessage, buffer);
 				Send(node->userInfo->sockfd, userMessage);
-				free(userMessage);
 			}
 			pthread_mutex_unlock(&clientListMutex);
+			free(userMessage);
 		}
 		//Reset the buffer
 		memset(buffer, 0, sizeof(buffer));
+		free(message);
+		message = NULL;
 	}
 
 	//User disconnected, so we close the socket
 	printf("Say goodbye to %d\n", info->sockfd);
 	close(info->sockfd);
 	return NULL;
-
 }
 
+int get_entire_message(struct UserInfo *info, char **message)
+{
+	int bytesToReceive;
+	//Recieive input from the client 
+	int recBytes = recv(info->sockfd, &bytesToReceive, sizeof(int), 0);
+	printf("Waiting to receive %d bytes...\n", bytesToReceive);
+
+	//Check to see if the client disconnected	
+	if(recBytes < 1){
+		connection_lost(info);
+		return 0;
+	}
+
+	*message = (char *) malloc(sizeof(char) * bytesToReceive + 1);
+	recBytes = recv(info->sockfd, *message, bytesToReceive, MSG_WAITALL);
+		if (recBytes == -1)
+		{
+			connection_lost(info);
+			free(message);
+			return 0;
+		}
+	(*message)[bytesToReceive] = '\0';
+	return bytesToReceive;
+}
 void execute_command(struct UserInfo * info, char * buffer){
 	char * command = strdup(buffer);
 	char * token = strtok(command, " ");
@@ -418,4 +423,22 @@ void remove_user(struct UserNode * head, struct UserInfo * user){
 		prev = prev->next;
 		curr = curr->next;
 	}
+}
+
+void connection_lost(struct UserInfo *user)
+{
+	printf("Connection lost from %s\n", user->name);
+	pthread_mutex_lock(&clientListMutex);
+	//could need up to BUFF_SIZE for the name (including '\0'), plus the length of the
+	//extra information
+	char remMsg[REMMSG_LENGTH]; 
+	strcpy(remMsg, user->name);
+	strcat(remMsg, " disconnected from the chat room\n");
+	remove_user(userList, user);
+	struct UserNode * node;
+	for(node = userList; node != NULL; node = node->next){
+		Send(node->userInfo->sockfd, remMsg);
+	}
+	pthread_mutex_unlock(&clientListMutex);
+
 }

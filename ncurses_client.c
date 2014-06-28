@@ -149,6 +149,7 @@ int main(int argc, char *argv[])
 	{
 		printf("Error: could not create pthread.\n");
 		free(user_input);
+		write(clientSocket, "/quit\n", strlen("/quit\n") + 1);
 		close(clientSocket);
 		return PTHREAD_ERROR;
 	}
@@ -179,6 +180,7 @@ int main(int argc, char *argv[])
 		{
 			//if not, write the user's input to the server; note that, because
 			//getline is used, it includes the trailing '\n'
+			write(clientSocket, &chars_read, sizeof(int));
 			write(clientSocket, user_input, chars_read);
 		}
 	} while (strcmp(user_input, "/quit\n") != 0);
@@ -284,6 +286,7 @@ int ncurses_getline(char **output, size_t *alloced)
 					*alloced = 0;
 					return needed_size - 1;
 				}
+				*output = tmp;
 			}
 			(*output)[needed_size - 3] = input;
 			printw("%c", input);

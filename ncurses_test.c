@@ -39,12 +39,9 @@ int main(int argc, char *argv[])
 	return 0;
 }
 
-//This function only allows for input characters valid for
-//a username in the chat program.
 int ncurses_getline(char **output, size_t *alloced)
 {
 	int alloc_size = *alloced;
-	//char *retVal = malloc(alloc_size * sizeof(char));
 
 	//if output == NULL, ignore the claimed *alloced size
 	if (NULL == *output)
