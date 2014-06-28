@@ -1,37 +1,53 @@
 #include <ncurses.h>
 #include <stdlib.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <string.h>
+#include <stdio.h>
 
-#define BUFF_SIZE 64;
+#define BUFF_SIZE 128
 #define BACKSPACE 7
+#define SPACE_VALUE 32
+#define DEL_VALUE 127
 
 int ncurses_getline(char **output, size_t *alloced);
+int is_regular_input(int char_value);
 
-int main()
+int main(int argc, char *argv[])
 {
 	initscr();
 	cbreak();
 	keypad(stdscr, TRUE);
-	
+	scrollok(stdscr, TRUE);
 	noecho();
-	while (1)
+
+	char *input = NULL;
+	size_t size = 0;
+	int chars_read = ncurses_getline(&input, &size);
+
+	while (strcmp(input, "quit\n") != 0)
 	{
-		char *line = NULL;
-		size_t size = 0;
-		int chars_read = ncurses_getline(&line, &size);
-		printw("%s\n", line);
+		printw("%s", input);
 		refresh();
-	}	
-	
-	endwin();
+		chars_read = ncurses_getline(&input, &size);
+	}
+
+	free(input);
+
+	endwin(); //end ncurses
 
 	return 0;
 }
 
+//This function only allows for input characters valid for
+//a username in the chat program.
 int ncurses_getline(char **output, size_t *alloced)
 {
 	int alloc_size = *alloced;
 	//char *retVal = malloc(alloc_size * sizeof(char));
 
+	//if output == NULL, ignore the claimed *alloced size
 	if (NULL == *output)
 	{
 		alloc_size = BUFF_SIZE;
@@ -41,6 +57,13 @@ int ncurses_getline(char **output, size_t *alloced)
 			alloc_size = 0;
 			return 0;
 		}
+	}
+	else if (alloc_size == 1)
+	{
+		//if the alloc_size is only 1, there's not enough room for the
+		//required '\0' and '\n', so 
+		alloc_size++;
+		*output = realloc(*output, alloc_size * sizeof(char));
 	}
 	
 	int needed_size = 2; //one for '\n' and one for '\0'
@@ -58,8 +81,9 @@ int ncurses_getline(char **output, size_t *alloced)
 				mvdelch(y, x - 1);
 			}
 		}
-		else
+		else if ((input >= SPACE_VALUE) && (input < DEL_VALUE))
 		{
+			//after determing the input is a regular character, continue
 			needed_size++;
 			//realloc by factor of two if more size needed to prevent
 			//fragmentation, if possible; because needed_size is incremented
@@ -68,7 +92,7 @@ int ncurses_getline(char **output, size_t *alloced)
 			//alloc_size
 			if (needed_size > alloc_size)
 			{
-				alloc_size <<= 1;
+				alloc_size *= 2;
 				*output = realloc(*output, alloc_size * sizeof(char));
 			}
 			(*output)[needed_size - 3] = input;
