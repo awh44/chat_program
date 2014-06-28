@@ -149,7 +149,7 @@ int main(int argc, char *argv[])
 	{
 		printf("Error: could not create pthread.\n");
 		free(user_input);
-		write(clientSocket, "/quit\n", strlen("/quit\n") + 1);
+		write(clientSocket, "/quit\n", strlen("/quit\n"));
 		close(clientSocket);
 		return PTHREAD_ERROR;
 	}
