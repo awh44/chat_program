@@ -22,6 +22,8 @@
 #define PTHREAD_ERROR 16
 #define OUT_OF_MEMORY_ERROR 32
 
+#define MIN(x, y) (((x) < (y)) ? (x) : (y))
+
 void *get_messages(void *args);
 int ncurses_getline(char **output, size_t *alloced);
 void print_commands(char cmd_str[]);
@@ -91,9 +93,13 @@ int main(int argc, char *argv[])
 		return OUT_OF_MEMORY_ERROR;
 	}
 
-	user_input[chars_read - 1] = '\0';
-	//send the desired username to the server
-	write(clientSocket, user_input, chars_read);
+	//get rid of the newline, or make sure the string will
+	//null terminate when placed into a buffer on the server
+	user_input[MIN(chars_read, BUFF_SIZE) - 1] = '\0';
+	//send the desired username to the server; either write
+	//all of the characters read or keep it to the maximum
+	//username size
+	write(clientSocket, user_input, MIN(chars_read, BUFF_SIZE));
 	
 	//read from the server to determine its response
 	char from_server;
@@ -119,8 +125,9 @@ int main(int argc, char *argv[])
 			close(clientSocket);
 			return OUT_OF_MEMORY_ERROR;
 		}
+		user_input[MIN(chars_read, BUFF_SIZE) - 1] = '\0';
 
-		write(clientSocket, user_input, chars_read);
+		write(clientSocket, user_input, MIN(chars_read, BUFF_SIZE));
 		if (read(clientSocket, &from_server, 1) < 0)
 		{
 			endwin();
@@ -128,10 +135,10 @@ int main(int argc, char *argv[])
 			close(clientSocket);
 			return READ_ERROR;
 		}
+		refresh();
 	}
 	char username[BUFF_SIZE];
-	strncpy(username, user_input, BUFF_SIZE - 1);
-	username[BUFF_SIZE - 1] = '\0';
+	strcpy(username, user_input);
 	//----------------------------------------------------------------------
 
 	printw("\nWelcome to the chatroom, %s! You may now begin chatting. (Type \"/cmd\" to list commands.)\n", username);

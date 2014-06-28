@@ -11,7 +11,7 @@
 
 #define USERS 10
 #define WAITING 10
-#define BUFFSIZE 1024
+#define BUFFSIZE 128
 #define NAMELEN 32
 
 struct UserInfo{
@@ -58,7 +58,7 @@ int main()
 
 	char * host = (char *)malloc(sizeof(char)*BUFFSIZE);
 	host[0] = '\0';
-	gethostname(host, sizeof(host));
+	gethostname(host, BUFFSIZE);
 	printf("%s\n", host);
 	//Port for chat program
 	int port = 9034;
@@ -134,13 +134,14 @@ void * user_handler(void * user){
 	bool userNameChosen = false;
 	bool userNameTaken = false;
 
-	char name[NAMELEN];
-	char buffer[BUFFSIZE];
+	char name[BUFFSIZE] = {0};
+	char buffer[BUFFSIZE] = {0};
 	//Get user's chosen name, see if it's already taken
 	//If it is, then we keep checking until they give one that isn't taken
 	while(!userNameChosen){
 		//Get name from server
-		recBytes = recv(info->sockfd, name, sizeof(name), 0);
+		recBytes = recv(info->sockfd, name, BUFFSIZE, 0);
+		name[recBytes - 1] = '\0';
 
 		//Go through the list of clients
 		pthread_mutex_lock(&clientListMutex);
@@ -149,8 +150,7 @@ void * user_handler(void * user){
 			//(note:) Send taken to the user, so the client
 				//Will know to prompt the user for a new name
 			if(strcmp(node->userInfo->name, name) == 0){
-				strcpy(buffer, "t");
-				Send(info->sockfd, buffer);
+				Send(info->sockfd, "t");
 				pthread_mutex_unlock(&clientListMutex);
 				userNameTaken = true;
 				break;
@@ -159,44 +159,43 @@ void * user_handler(void * user){
 		//Add UserName to User Information, Notify client
 		if(!userNameTaken){
 			info->name = name;
-			strcpy(buffer, "success");
-			Send(info->sockfd, buffer);
+			Send(info->sockfd, "s");
 			pthread_mutex_unlock(&clientListMutex);
 			userNameChosen = true;
 		}else{
 			userNameTaken = false;
 		}
 	}
-	char * intro = (char *)malloc(sizeof(char)*BUFFSIZE);
-	intro[0] = '\0';
-	strcat(intro, info->name);
-	strcat(intro, " joined the chatroom!\n");
 	
+	char * intro = (char *)malloc(sizeof(char) * (BUFFSIZE + strlen(" joined the chatroom!")));
+	strcpy(intro, info->name);
+	strcat(intro, " joined the chatroom!\n");
+
 	//Send welcome to all users
 	pthread_mutex_lock(&clientListMutex);
 	for(node = userList; node != NULL; node = node->next){
-		Send(node->userInfo->sockfd, intro);
+		if (strcmp(name, node->userInfo->name) != 0)
+			Send(node->userInfo->sockfd, intro);
 	}
 	pthread_mutex_unlock(&clientListMutex);
 
 	free(intro);
-
+	
 	//Recieve and parse input from the client until they disconnect
 	while(1){
-		char * ptr = buffer;
-		int remBytes = BUFFSIZE;
-
+		
 		//Recieive input from the client 
 		recBytes = recv(info->sockfd, buffer, sizeof(buffer),0);
 	
 
 		//Check to see if the client disconnected	
-		if(!recBytes){
+		if(recBytes < 1){
 			printf("Connection lost from %s\n", info->name);
 			pthread_mutex_lock(&clientListMutex);
-			char * remMsg = (char *)malloc(sizeof(char)*BUFFSIZE);
-			remMsg[0] = '\0';
-			strcat(remMsg, info->name);
+			//could need up to BUFF_SIZE for the name (including '\0'), plus the length of the
+			//extra information
+			char * remMsg = (char *)malloc(sizeof(char)* (BUFFSIZE + strlen(" disconnected from the chat room\n")));
+			strcpy(remMsg, info->name);
 			strcat(remMsg, " disconnected from the chat room\n");
 			remove_user(userList, info);
 			struct UserNode * node;
