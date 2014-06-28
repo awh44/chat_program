@@ -12,7 +12,6 @@
 #define DEL_VALUE 127
 
 int ncurses_getline(char **output, size_t *alloced);
-int is_regular_input(int char_value);
 
 int main(int argc, char *argv[])
 {
@@ -61,7 +60,7 @@ int ncurses_getline(char **output, size_t *alloced)
 	else if (alloc_size == 1)
 	{
 		//if the alloc_size is only 1, there's not enough room for the
-		//required '\0' and '\n', so 
+		//required '\0' and '\n', so realloc to at least a size of two
 		alloc_size++;
 		*output = realloc(*output, alloc_size * sizeof(char));
 	}
