@@ -8,8 +8,19 @@
 #include <pthread.h>
 
 #define BUFF_SIZE 128
+
 #define BACKSPACE 7
+#define SPACE_VALUE 32
+#define DEL_VALUE 127
+
 #define PORT_NUM 9034
+
+#define BASIC_ERROR 1
+#define CONNECTION_ERROR 2
+#define READ_ERROR 4
+#define WRITE_ERROR 8
+#define PTHREAD_ERROR 16
+#define OUT_OF_MEMORY_ERROR 32
 
 void *get_messages(void *args);
 int ncurses_getline(char **output, size_t *alloced);
@@ -20,7 +31,7 @@ int main(int argc, char *argv[])
 	if (argc < 2)
 	{
 		printf("Please include the URL of the server you would like to connect to as a command line argument.\n");
-		return 1;
+		return BASIC_ERROR;
 	}
 
 	initscr();
@@ -58,7 +69,7 @@ int main(int argc, char *argv[])
 	{
 		endwin();
 		printf("Error: couldn't connect to host\n");
-		return 5;
+		return CONNECTION_ERROR;
 	}
 
 	printw("Successfully connected to server.\n\n");
@@ -66,11 +77,20 @@ int main(int argc, char *argv[])
 	//----------------------------------------------------------------------
 
 	//have the user choose a username---------------------------------------
-	printw("What would you like your username to be? (Less than 128 characters)\n");
+	printw("What would you like your username to be? (Less than %d characters)\n", BUFF_SIZE);
 	refresh();
 	char *user_input = NULL;
 	size_t size = 0;
 	int chars_read = ncurses_getline(&user_input, &size);
+
+	if (user_input == NULL)
+	{
+		endwin();
+		printf("Error: could not allocate enough memory.\n");
+		close(clientSocket);
+		return OUT_OF_MEMORY_ERROR;
+	}
+
 	user_input[chars_read - 1] = '\0';
 	//send the desired username to the server
 	write(clientSocket, user_input, chars_read);
@@ -82,7 +102,7 @@ int main(int argc, char *argv[])
 		endwin();
 		printf("Error in reading from the server.\n");
 		close(clientSocket);
-		return 15;
+		return READ_ERROR;
 	}
 
 	//if the username was taken (indicated by receiving 't' from the server),
@@ -92,6 +112,13 @@ int main(int argc, char *argv[])
 		printw("Sorry, that username is already taken. Please try another.\n");
 		refresh();
 		chars_read = ncurses_getline(&user_input, &size);
+		if (user_input == NULL)
+		{
+			endwin();
+			printf("Error: could not allocate enough memory.\n");
+			close(clientSocket);
+			return OUT_OF_MEMORY_ERROR;
+		}
 
 		write(clientSocket, user_input, chars_read);
 		if (read(clientSocket, &from_server, 1) < 0)
@@ -99,11 +126,12 @@ int main(int argc, char *argv[])
 			endwin();
 			printf("Error in reading from the server.\n");
 			close(clientSocket);
-			return 15;
+			return READ_ERROR;
 		}
 	}
-	char username[128];
-	strcpy(username, user_input);
+	char username[BUFF_SIZE];
+	strncpy(username, user_input, BUFF_SIZE - 1);
+	username[BUFF_SIZE - 1] = '\0';
 	//----------------------------------------------------------------------
 
 	printw("\nWelcome to the chatroom, %s! You may now begin chatting. (Type \"/cmd\" to list commands.)\n", username);
@@ -112,9 +140,10 @@ int main(int argc, char *argv[])
 	pthread_t msg_thread;
 	if (pthread_create(&msg_thread, NULL, get_messages, (void *) (intptr_t) clientSocket))
 	{
-		printf("Couldn't create pthread\n");
+		printf("Error: could not create pthread.\n");
+		free(user_input);
 		close(clientSocket);
-		return 10;
+		return PTHREAD_ERROR;
 	}
 	//thread isn't joined because it *should* terminate when main finishes
 	//----------------------------------------------------------------------
@@ -124,6 +153,16 @@ int main(int argc, char *argv[])
 	{
 		//read the user's input, store the number of characters read
 		chars_read = ncurses_getline(&user_input, &size);
+
+		if (user_input == NULL)
+		{
+			endwin();
+			printf("Error: couldn't allocate enough memory.\n");
+			pthread_kill(msg_thread);
+			close(clientSocket);
+			return OUT_OF_MEMORY_ERROR;	
+		}
+
 		//determine if they want the commands printed
 		if (strcmp(user_input, "/cmd\n") == 0)
 		{
@@ -173,20 +212,35 @@ void *get_messages(void *args)
 	}
 }
 
+//Returns the number of characters read, including the newline
+//but ignoring the null terminator. Could potentially changed
+//the passed *output pointer by reallocing. Sets *output to
+//NULL on out of memory errors, after freeing. Note that this
+//means there will be no way to recover information from
+//user input upon out of memory errors. Note that the number
+//of characters read before running out of memory will always
+//be returned though
 int ncurses_getline(char **output, size_t *alloced)
 {
 	int alloc_size = *alloced;
-	//char *retVal = malloc(alloc_size * sizeof(char));
 
+	//if output == NULL, ignore the claimed *alloced size
 	if (NULL == *output)
 	{
 		alloc_size = BUFF_SIZE;
 		*output = malloc(alloc_size * sizeof(char));
 		if (NULL == *output)
 		{
-			alloc_size = 0;
+			*alloced = 0;
 			return 0;
 		}
+	}
+	else if (alloc_size == 1)
+	{
+		//if the alloc_size is only 1, there's not enough room for the
+		//required '\0' and '\n', so realloc to at least a size of two
+		alloc_size++;
+		*output = realloc(*output, alloc_size * sizeof(char));
 	}
 	
 	int needed_size = 2; //one for '\n' and one for '\0'
@@ -204,8 +258,9 @@ int ncurses_getline(char **output, size_t *alloced)
 				mvdelch(y, x - 1);
 			}
 		}
-		else
+		else if ((input >= SPACE_VALUE) && (input < DEL_VALUE))
 		{
+			//after determing the input is a regular character, continue
 			needed_size++;
 			//realloc by factor of two if more size needed to prevent
 			//fragmentation, if possible; because needed_size is incremented
@@ -214,8 +269,14 @@ int ncurses_getline(char **output, size_t *alloced)
 			//alloc_size
 			if (needed_size > alloc_size)
 			{
-				alloc_size <<= 1;
-				*output = realloc(*output, alloc_size * sizeof(char));
+				alloc_size *= 2;
+				char *tmp = realloc(*output, alloc_size * sizeof(char));
+				if (NULL == tmp)
+				{
+					free(*output);
+					*alloced = 0;
+					return needed_size - 1;
+				}
 			}
 			(*output)[needed_size - 3] = input;
 			printw("%c", input);
