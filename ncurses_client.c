@@ -30,9 +30,15 @@ typedef struct
 	char *str;
 } History;
 
+typedef struct
+{
+	intptr_t fd;
+	WINDOW *out_window;
+} ThreadArguments;
+
 void *get_messages(void *args);
-int ncurses_getline(char **output, size_t *alloced);
-void print_commands(char cmd_str[]);
+int ncurses_getline(char **output, size_t *alloced, WINDOW *in_win);
+void print_commands(char cmd_str[], WINDOW *out_win);
 
 int main(int argc, char *argv[])
 {
@@ -41,13 +47,19 @@ int main(int argc, char *argv[])
 		printf("Please include the URL of the server you would like to connect to as a command line argument.\n");
 		return BASIC_ERROR;
 	}
-
+	
+	//initialize ncurses requirements---------------------------------------
 	initscr();
 	cbreak();
-	keypad(stdscr, TRUE);
-	scrollok(stdscr, TRUE);
-	
 	noecho();
+
+	WINDOW *out_window = newwin(LINES - 1, COLS, 0, 0);
+	scrollok(out_window, TRUE);
+	leaveok(out_window, TRUE);
+
+	WINDOW *in_window = newwin(1, COLS, LINES - 1, 0);
+	scrollok(in_window, TRUE);
+	//----------------------------------------------------------------------
 
 	//Set up a string which will be used by another function in the program
 	char commands_str[] = "\nThe commands are:\n/roll [dice]d[number] - roll [dice] number of dice with [number] sides\n/me [action] - outputs your username as performing the action\n/whisper [username] [message] - send [message] only to user [username]\n/quit - quit the program\n\n";
@@ -61,8 +73,8 @@ int main(int argc, char *argv[])
 	char host[BUFF_SIZE];
 	strcpy(host, argv[1]);
 
-	printw("Connecting to server...\n");
-	refresh();
+	wprintw(out_window, "Connecting to server...\n");
+	wrefresh(out_window);
 
 	//set up the socket and sockaddr
 	clientSocket = socket(PF_INET, SOCK_STREAM, 0);
@@ -75,24 +87,28 @@ int main(int argc, char *argv[])
 
 	if (connect(clientSocket, (struct sockaddr *) &sad, sizeof(sad)) < 0)
 	{
+		delwin(out_window);
+		delwin(in_window);
 		endwin();
 		printf("Error: couldn't connect to host\n");
 		return CONNECTION_ERROR;
 	}
 
-	printw("Successfully connected to server.\n\n");
-	refresh();
+	wprintw(out_window, "Successfully connected to server.\n\n");
+	wrefresh(out_window);
 	//----------------------------------------------------------------------
 
 	//have the user choose a username---------------------------------------
-	printw("What would you like your username to be? (Less than %d characters)\n", BUFF_SIZE);
-	refresh();
+	wprintw(out_window, "What would you like your username to be? (Less than %d characters)\n", BUFF_SIZE);
+	wrefresh(out_window);
 	char *user_input = NULL;
 	size_t size = 0;
-	int chars_read = ncurses_getline(&user_input, &size);
+	int chars_read = ncurses_getline(&user_input, &size, out_window);
 
 	if (user_input == NULL)
 	{
+		delwin(out_window);
+		delwin(in_window);
 		endwin();
 		printf("Error: could not allocate enough memory.\n");
 		close(clientSocket);
@@ -111,6 +127,8 @@ int main(int argc, char *argv[])
 	char from_server;
 	if (read(clientSocket, &from_server, 1) < 0)
 	{
+		delwin(out_window);
+		delwin(in_window);
 		endwin();
 		printf("Error in reading from the server.\n");
 		close(clientSocket);
@@ -121,11 +139,13 @@ int main(int argc, char *argv[])
 	//have the user try another
 	while (from_server == 't')
 	{
-		printw("Sorry, that username is already taken. Please try another.\n");
-		refresh();
-		chars_read = ncurses_getline(&user_input, &size);
+		wprintw(out_window, "Sorry, that username is already taken. Please try another.\n");
+		wrefresh(out_window);
+		chars_read = ncurses_getline(&user_input, &size, out_window);
 		if (user_input == NULL)
 		{
+			delwin(out_window);
+			delwin(in_window);
 			endwin();
 			printf("Error: could not allocate enough memory.\n");
 			close(clientSocket);
@@ -136,23 +156,31 @@ int main(int argc, char *argv[])
 		write(clientSocket, user_input, MIN(chars_read, BUFF_SIZE));
 		if (read(clientSocket, &from_server, 1) < 0)
 		{
+			delwin(out_window);
+			delwin(in_window);
 			endwin();
 			printf("Error in reading from the server.\n");
 			close(clientSocket);
 			return READ_ERROR;
 		}
-		refresh();
 	}
 	char username[BUFF_SIZE];
 	strcpy(username, user_input);
 	//----------------------------------------------------------------------
 
-	printw("\nWelcome to the chatroom, %s! You may now begin chatting. (Type \"/cmd\" to list commands.)\n", username);
-	refresh();
+	wprintw(out_window, "\nWelcome to the chatroom, %s! You may now begin chatting. (Type \"/cmd\" to list commands.)\n", username);
+	wrefresh(out_window);
+
 	//create the thread for receiving messages from the server--------------
+	ThreadArguments args;
+	args.fd = clientSocket;
+	args.out_window = out_window;
 	pthread_t msg_thread;
-	if (pthread_create(&msg_thread, NULL, get_messages, (void *) (intptr_t) clientSocket))
+	if (pthread_create(&msg_thread, NULL, get_messages, &args))
 	{
+		delwin(out_window);
+		delwin(in_window);
+		endwin();
 		printf("Error: could not create pthread.\n");
 		free(user_input);
 		int tmp = strlen("/quit\n");
@@ -168,10 +196,13 @@ int main(int argc, char *argv[])
 	do
 	{
 		//read the user's input, store the number of characters read
-		chars_read = ncurses_getline(&user_input, &size);
+		chars_read = ncurses_getline(&user_input, &size, in_window);
 
 		if (user_input == NULL)
 		{
+			pthread_kill(msg_thread);
+			delwin(in_window);
+			delwin(out_window);
 			endwin();
 			printf("Error: couldn't allocate enough memory.\n");
 			pthread_kill(msg_thread);
@@ -182,7 +213,7 @@ int main(int argc, char *argv[])
 		//determine if they want the commands printed
 		if (strcmp(user_input, "/cmd\n") == 0)
 		{
-			print_commands(commands_str);
+			print_commands(commands_str, out_window);
 		}
 		else
 		{
@@ -201,6 +232,8 @@ int main(int argc, char *argv[])
 	//make sure to kill the thread before closing socket so that this thread
 	//isn't switched out for the other and data read from the server
 	pthread_kill(msg_thread);
+	delwin(out_window);
+	delwin(in_window);
 	close(clientSocket);
 	endwin(); //end ncurses
 	//----------------------------------------------------------------------
@@ -211,7 +244,9 @@ int main(int argc, char *argv[])
 void *get_messages(void *args)
 {
 	//get the value of the shared file descriptor for the clientSocker
-	int clientSocket = (intptr_t) args;
+	ThreadArguments *args_p = (ThreadArguments *) args;
+	int clientSocket = args_p->fd;
+	WINDOW *out_win = args_p->out_window;
 
 	//continuously read from the server and print out what is received;
 	//because TCP is being used, it is assured that that all data will be
@@ -226,8 +261,8 @@ void *get_messages(void *args)
 		{
 			from_server[bytes_read] = '\0';
 		}
-		printw("%s", from_server);
-		refresh();
+		wprintw(out_win, "%s", from_server);
+		wrefresh(out_win);
 	}
 }
 
@@ -239,7 +274,7 @@ void *get_messages(void *args)
 //user input upon out of memory errors. Note that the number
 //of characters read before running out of memory will always
 //be returned though
-int ncurses_getline(char **output, size_t *alloced)
+int ncurses_getline(char **output, size_t *alloced, WINDOW *in_win)
 {
 	int alloc_size = *alloced;
 
@@ -265,16 +300,16 @@ int ncurses_getline(char **output, size_t *alloced)
 	int needed_size = 2; //one for '\n' and one for '\0'
 
 	char input;
-	while ((input = getch()) != '\n')
+	while ((input = wgetch(in_win)) != '\n')
 	{
-		if (input == BACKSPACE)
+		if ((input == BACKSPACE) || (input == DEL_VALUE))
 		{
 			if (needed_size > 2)
 			{
 				needed_size--;
 				int x, y;
-				getyx(stdscr, y, x);
-				mvdelch(y, x - 1);
+				getyx(in_win, y, x);
+				mvwdelch(in_win, y, x - 1);
 			}
 		}
 		else if ((input >= SPACE_VALUE) && (input < DEL_VALUE))
@@ -299,24 +334,24 @@ int ncurses_getline(char **output, size_t *alloced)
 				*output = tmp;
 			}
 			(*output)[needed_size - 3] = input;
-			printw("%c", input);
+			wprintw(in_win, "%c", input);
 		}
-		refresh();
+		wrefresh(in_win);
 	}
 
 	(*output)[needed_size - 2] = '\n';
 	(*output)[needed_size - 1] = '\0';
 
-	printw("\n");
-	refresh();
+	wprintw(in_win, "\n");
+	wrefresh(in_win);
 
 	*alloced = alloc_size;
 	//subtract one for the null terminator
 	return needed_size - 1;
 }
 
-void print_commands(char cmd_str[])
+void print_commands(char cmd_str[], WINDOW *out_win)
 {
-	printw("%s", cmd_str);
-	refresh();
+	wprintw(out_win, "%s", cmd_str);
+	wrefresh(out_win);
 }

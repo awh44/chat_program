@@ -8,11 +8,10 @@
 
 #define BUFF_SIZE 128
 #define BACKSPACE 7
-#define DELETE 127
 #define SPACE_VALUE 32
 #define DEL_VALUE 127
 
-int ncurses_getline(char **output, size_t *alloced, WINDOW *out_win);
+int ncurses_getline(char **output, size_t *alloced, WINDOW *in_win);
 
 int main(int argc, char *argv[])
 {
@@ -28,7 +27,6 @@ int main(int argc, char *argv[])
 
 	WINDOW *input_win = newwin(1, COLS, LINES - 1, 0);
 	scrollok(input_win, TRUE);
-
 	char *input = NULL;
 	size_t size = 0;
 	int chars_read = ncurses_getline(&input, &size, input_win);
@@ -87,7 +85,7 @@ int ncurses_getline(char **output, size_t *alloced, WINDOW *in_win)
 	char input;
 	while ((input = wgetch(in_win)) != '\n')
 	{
-		if ((input == BACKSPACE) || (input == DELETE))
+		if ((input == BACKSPACE) || (input == DEL_VALUE))
 		{
 			if (needed_size > 2)
 			{
