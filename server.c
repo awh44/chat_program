@@ -189,15 +189,15 @@ void * user_handler(void * user){
 	char *message = NULL;
 	while((messageSize = get_entire_message(info, &message)) > 0){
 		//If it's quit command, exit
-		if(strcmp(buffer, "/quit\n") == 0){
+		if(strcmp(message, "/quit\n") == 0){
 			printf("User quit\n");
 			connection_lost(info);
 			//indicate to client that it can now disconnect
 			free(message);
 			break;
 			//If it's a command, execute it
-		}else if(buffer[0] == '/'){
-			execute_command(info, &buffer[1]);
+		}else if(message[0] == '/'){
+			execute_command(info, &message[1]);
 		//Else, send to all users
 		}else{
 			//Lock the mutex, because we're traversing the user List
@@ -213,7 +213,6 @@ void * user_handler(void * user){
 			free(userMessage);
 		}
 		//Reset the buffer
-		memset(buffer, 0, sizeof(buffer));
 		free(message);
 		message = NULL;
 	}
