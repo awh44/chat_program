@@ -24,6 +24,12 @@
 
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
 
+typedef struct
+{
+	int alloc_size;
+	char *str;
+} History;
+
 void *get_messages(void *args);
 int ncurses_getline(char **output, size_t *alloced);
 void print_commands(char cmd_str[]);
@@ -149,7 +155,9 @@ int main(int argc, char *argv[])
 	{
 		printf("Error: could not create pthread.\n");
 		free(user_input);
-		write(clientSocket, "/quit\n", strlen("/quit\n"));
+		int tmp = strlen("/quit\n");
+		write(clientSocket, &tmp, sizeof(int));
+		write(clientSocket, "/quit\n", tmp);
 		close(clientSocket);
 		return PTHREAD_ERROR;
 	}
@@ -180,7 +188,9 @@ int main(int argc, char *argv[])
 		{
 			//if not, write the user's input to the server; note that, because
 			//getline is used, it includes the trailing '\n'
+			//first inform the server how long the message will be...
 			write(clientSocket, &chars_read, sizeof(int));
+			//...and then send the message
 			write(clientSocket, user_input, chars_read);
 		}
 	} while (strcmp(user_input, "/quit\n") != 0);
