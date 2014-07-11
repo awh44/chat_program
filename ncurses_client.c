@@ -6,14 +6,15 @@
 #include <string.h>
 #include <stdio.h>
 #include <pthread.h>
+#include <time.h>
 
-#define BUFF_SIZE 128
+#include "TuxChatConstants.h"
+
+#define MAX_COMMAND_LENGTH 8
 
 #define BACKSPACE 7
 #define SPACE_VALUE 32
 #define DEL_VALUE 127
-
-#define PORT_NUM 9034
 
 #define BASIC_ERROR 1
 #define CONNECTION_ERROR 2
@@ -39,6 +40,8 @@ typedef struct
 void *get_messages(void *args);
 int ncurses_getline(char **output, size_t *alloced, WINDOW *in_win);
 void print_commands(char cmd_str[], WINDOW *out_win);
+void execute_command(char *username, char *input, int clientSocket, WINDOW *notification_win);
+int get_num_digits(int i);
 
 int main(int argc, char *argv[])
 {
@@ -63,7 +66,7 @@ int main(int argc, char *argv[])
 
 	//Set up a string which will be used by another function in the program
 	char commands_str[] = "\nThe commands are:\n/roll [dice]d[number] - roll [dice] number of dice with [number] sides\n/me [action] - outputs your username as performing the action\n/whisper [username] [message] - send [message] only to user [username]\n/quit - quit the program\n\n";
-
+	srand(time(NULL));
 	//Establish the connection to the server--------------------------------
 	struct sockaddr_in sad;
 	int clientSocket;
@@ -164,8 +167,9 @@ int main(int argc, char *argv[])
 			return READ_ERROR;
 		}
 	}
-	char username[BUFF_SIZE];
-	strcpy(username, user_input);
+	char username[BUFF_SIZE] = {0};
+	strncpy(username, user_input, BUFF_SIZE - 1);
+	const int USERNAME_LENGTH = strlen(username);
 	//----------------------------------------------------------------------
 
 	wprintw(out_window, "\nWelcome to the chatroom, %s! You may now begin chatting. (Type \"/cmd\" to list commands.)\n", username);
@@ -215,14 +219,25 @@ int main(int argc, char *argv[])
 		{
 			print_commands(commands_str, out_window);
 		}
+		else if (user_input[0] == '/')
+		{
+			execute_command(username, &user_input[1], clientSocket, out_window);
+		}
 		else
 		{
 			//if not, write the user's input to the server; note that, because
 			//getline is used, it includes the trailing '\n'
 			//first inform the server how long the message will be...
-			write(clientSocket, &chars_read, sizeof(int));
+			int to_send = chars_read + USERNAME_LENGTH + strlen(": ");
+			char *message = (char *) malloc((to_send + 1) * sizeof(char));
+			strcpy(message, username);
+			strcat(message, ": ");
+			strcat(message, user_input);
+
+			write(clientSocket, &to_send, sizeof(int));
 			//...and then send the message
-			write(clientSocket, user_input, chars_read);
+			write(clientSocket, message, to_send);
+			free(message);
 		}
 	} while (strcmp(user_input, "/quit\n") != 0);
 	//----------------------------------------------------------------------
@@ -350,8 +365,97 @@ int ncurses_getline(char **output, size_t *alloced, WINDOW *in_win)
 	return needed_size - 1;
 }
 
+void execute_command(char *username, char *input, int clientSocket, WINDOW *notification_win)
+{
+	if (strncmp(input, "me", 2) == 0)
+	{
+		if (input[3] == '\0')
+			return;
+		
+		//username + ' ' + message
+		int message_length = strlen(username) + strlen(&input[3]) + 1;
+		char *message = (char *) malloc((message_length + 1) * sizeof(char));
+		strcpy(message, username);
+		strcat(message, " ");
+		strcat(message, &input[3]);
+		strcat(message, "\n");
+
+		write(clientSocket, &message_length, sizeof(int));
+		write(clientSocket, message, message_length);
+	}
+	else if (strncmp(input, "roll", 4) == 0)
+	{
+		if (input[5] == '\0')
+			return;
+
+		char *dice_info = strdup(&input[5]);
+		char *s_num_sides = dice_info;
+		char *s_num_dice = strsep(&s_num_sides, "d");
+		if (s_num_sides == NULL)
+		{
+			wprintw(notification_win, "Correct usage of roll command: /roll [dice]d[sides]\n");
+			wrefresh(notification_win);
+			return;
+		}
+
+		int num_dice = atoi(s_num_dice);
+		int num_sides = atoi(s_num_sides);
+		if ((num_dice <= 0) || (num_sides <= 0))
+		{
+			wprintw(notification_win, "Correct usage of roll command: /roll [dice]d[sides]\n");
+			wrefresh(notification_win);
+			return;
+		}
+
+		int message_size = strlen(username) + strlen(" rolled  dice with  sides.\n") + get_num_digits(num_dice) + get_num_digits(num_sides) + 1;
+		//char **rolls = (char **) malloc(num_dice * sizeof(char*));
+		int *rolls = (int *) malloc(num_dice * sizeof(int));
+		int total = 0;
+		int i;
+		for (i = 0; i < num_dice; i++)
+		{
+			int roll = rand() % num_sides + 1;
+			total += roll;
+			rolls[i] = roll;
+			message_size += strlen("Roll : \n") + get_num_digits(i + 1) + get_num_digits(roll);
+		}
+
+		message_size += strlen("Total: \n") + get_num_digits(total);
+		char *message = (char *) malloc(message_size * sizeof(char));
+		sprintf(message, "%s rolled %d dice with %d sides.\n", username, num_dice, num_sides);
+		for (i = 0; i < num_dice; i++)
+		{
+			sprintf(message, "%sRoll %d: %d\n", message, i + 1, rolls[i]);
+		}
+		sprintf(message, "%sTotal: %d\n", message, total);
+
+		message_size -= 1;
+		write(clientSocket, &message_size, sizeof(int));
+		write(clientSocket, message, message_size);
+
+		free(dice_info);
+		free(rolls);
+		free(message);
+	}
+	else if (strncmp(input, "whisper", 7) == 0)
+	{
+		wprintw(notification_win, "Going to do a \"whisper\" command.\n");
+	}
+	wrefresh(notification_win);
+}
+
 void print_commands(char cmd_str[], WINDOW *out_win)
 {
 	wprintw(out_win, "%s", cmd_str);
 	wrefresh(out_win);
+}
+
+int get_num_digits(int i)
+{
+	int length = 1;
+	while ((i /= 10) != 0)
+	{
+		length++;
+	}
+	return length;
 }

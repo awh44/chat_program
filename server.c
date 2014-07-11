@@ -9,10 +9,10 @@
 #include <stdbool.h>
 #include <time.h>
 
+#include "TuxChatConstants.h"
+
 #define USERS 10
 #define WAITING 10
-#define BUFFSIZE 128
-#define NAMELEN 32
 #define REMMSG_LENGTH 161
 #define INTRO_LENGTH 149
 
@@ -43,7 +43,7 @@ void * user_handler(void * user);
 //Helper function to execute server functions
 void execute_command(struct UserInfo * user, char * cmd);
 void connection_lost(struct UserInfo * user);
-int get_entire_message(struct UserInfo * info, char **message);
+int get_entire_message(struct UserInfo * info, char **message, int bytesToReceive);
 
 int main()
 {
@@ -60,12 +60,12 @@ int main()
 	//Randomize the random number generator
 	srand(time(NULL));
 
-	char host[BUFFSIZE];
+	char host[BUFF_SIZE];
 	host[0] = '\0';
-	gethostname(host, BUFFSIZE);
+	gethostname(host, BUFF_SIZE);
 	printf("%s\n", host);
 	//Port for chat program
-	int port = 9034;
+	int port = PORT_NUM;
 
 	//Initialize socket that is listening for users
 	if((welcomeSocket = socket(PF_INET, SOCK_STREAM, 0)) == -1){
@@ -138,13 +138,13 @@ void * user_handler(void * user){
 	bool userNameChosen = false;
 	bool userNameTaken = false;
 
-	char name[BUFFSIZE] = {0};
-	char buffer[BUFFSIZE] = {0};
+	char name[BUFF_SIZE] = {0};
+	char buffer[BUFF_SIZE] = {0};
 	//Get user's chosen name, see if it's already taken
 	//If it is, then we keep checking until they give one that isn't taken
 	while(!userNameChosen){
 		//Get name from server
-		recBytes = recv(info->sockfd, name, BUFFSIZE, 0);
+		recBytes = recv(info->sockfd, name, BUFF_SIZE, 0);
 		name[recBytes - 1] = '\0';
 
 		//Go through the list of clients
@@ -183,39 +183,71 @@ void * user_handler(void * user){
 	}
 	pthread_mutex_unlock(&clientListMutex);
 
-	
-	//Recieve and parse input from the client until they disconnect
-	int messageSize = 0;
-	char *message = NULL;
-	while((messageSize = get_entire_message(info, &message)) > 0){
-		//If it's quit command, exit
-		if(strcmp(message, "/quit\n") == 0){
+	while (1)
+	{
+		int bytesToReceive;
+		int recBytes = recv(info->sockfd, &bytesToReceive, sizeof(int), 0);
+		if (recBytes < 1)
+		{
 			printf("User quit\n");
 			connection_lost(info);
-			//indicate to client that it can now disconnect
-			free(message);
 			break;
-			//If it's a command, execute it
-		}else if(message[0] == '/'){
-			execute_command(info, &message[1]);
-		//Else, send to all users
-		}else{
-			//Lock the mutex, because we're traversing the user List
-			char *userMessage = (char *) malloc(sizeof(char) * (BUFFSIZE + messageSize));
-			strcpy(userMessage, info->name);
-			strcat(userMessage, ": ");
-			strcat(userMessage, message);
+		}
+
+		if (bytesToReceive == WHISPER_INDICATOR)
+		{
+			printf("Going to send a whisper command.\n");
+		}
+		else
+		{
+			char *message = NULL;
+			int messageSize = get_entire_message(info, &message, bytesToReceive);
+			//3 = ':' + ' ' + '\0'
+			//char *userMessage = (char *) malloc(sizeof(char) * (strlen(info->name) + messageSize + 3));
+			//strcpy(userMessage, info->name);
+			//strcat(userMessage, ": ");
+			//strcat(userMessage, message);
 			pthread_mutex_lock(&clientListMutex);
 			for(node = userList; node != NULL; node = node->next ){
-				Send(node->userInfo->sockfd, userMessage);
+				Send(node->userInfo->sockfd, message);
 			}
 			pthread_mutex_unlock(&clientListMutex);
-			free(userMessage);
+			//free(userMessage);
 		}
-		//Reset the buffer
-		free(message);
-		message = NULL;
 	}
+
+	//Recieve and parse input from the client until they disconnect
+//	int messageSize = 0;
+//	char *message = NULL;
+//	while((messageSize = get_entire_message(info, &message)) > 0){
+//		//If it's quit command, exit
+//		if(strcmp(message, "/quit\n") == 0){
+//			printf("User quit\n");
+//			connection_lost(info);
+//			//indicate to client that it can now disconnect
+//			free(message);
+//			break;
+//			//If it's a command, execute it
+//		}else if(message[0] == '/'){
+//			execute_command(info, &message[1]);
+//		//Else, send to all users
+//		}else{
+//			//Lock the mutex, because we're traversing the user List
+//			char *userMessage = (char *) malloc(sizeof(char) * (BUFF_SIZE + messageSize));
+//			strcpy(userMessage, info->name);
+//			strcat(userMessage, ": ");
+//			strcat(userMessage, message);
+//			pthread_mutex_lock(&clientListMutex);
+//			for(node = userList; node != NULL; node = node->next ){
+//				Send(node->userInfo->sockfd, userMessage);
+//			}
+//			pthread_mutex_unlock(&clientListMutex);
+//			free(userMessage);
+//		}
+//		//Reset the buffer
+//		free(message);
+//		message = NULL;
+//	}
 
 	//User disconnected, so we close the socket
 	printf("Say goodbye to %d\n", info->sockfd);
@@ -223,18 +255,22 @@ void * user_handler(void * user){
 	return NULL;
 }
 
-int get_entire_message(struct UserInfo *info, char **message)
+int get_entire_message(struct UserInfo *info, char **message, int bytesToReceive)
 {
-	int bytesToReceive;
 	//Recieive input from the client 
-	int recBytes = recv(info->sockfd, &bytesToReceive, sizeof(int), 0);
-	printf("Waiting to receive %d bytes...\n", bytesToReceive);
+	int recBytes;
+	if (bytesToReceive < 0)
+	{
+		recBytes = recv(info->sockfd, &bytesToReceive, sizeof(int), 0);
 
-	//Check to see if the client disconnected	
-	if(recBytes < 1){
-		connection_lost(info);
-		return 0;
+		//Check to see if the client disconnected	
+		if(recBytes < 1){
+			connection_lost(info);
+			return 0;
+		}
 	}
+
+	printf("Waiting to receive %d bytes...\n", bytesToReceive);
 
 	*message = (char *) malloc(sizeof(char) * bytesToReceive + 1);
 	recBytes = recv(info->sockfd, *message, bytesToReceive, MSG_WAITALL);
@@ -254,7 +290,7 @@ void execute_command(struct UserInfo * info, char * buffer){
 	//EXPECTED INPUT - /roll 3d10
 	if(!strcmp(token, "roll")){
 		printf("ROLL BABY ROLL\n");
-		char buffer2[BUFFSIZE];
+		char buffer2[BUFF_SIZE];
 		buffer2[0] = '\0';
 		//because the numbers are separated by d, get the two tokens
 		char * c_numDice = strtok(NULL, "d");
@@ -318,7 +354,7 @@ void execute_command(struct UserInfo * info, char * buffer){
 					//message, otherwise, send them 
 					//that they failed miserably
 				if(!strcmp(node->userInfo->name, whispName)){
-					char * message = (char *) malloc(sizeof(char)*BUFFSIZE);
+					char * message = (char *) malloc(sizeof(char)*BUFF_SIZE);
 					message[0] = '\0';
 					char * temp;
 				  	while((temp	= strtok(NULL, " ")) != NULL){
@@ -329,7 +365,7 @@ void execute_command(struct UserInfo * info, char * buffer){
 			
 					if(message != NULL){
 						//Expected Output -> "(User) Whispers: (message)"
-						char * userMessage = (char *)malloc(sizeof(char)*BUFFSIZE);
+						char * userMessage = (char *)malloc(sizeof(char)*BUFF_SIZE);
 						userMessage[0] = '\0';
 						strcat(userMessage, info->name);
 						strcat(userMessage, " Whispers: ");
@@ -345,7 +381,7 @@ void execute_command(struct UserInfo * info, char * buffer){
 		}
 	}else if(!strcmp(token, "me")){
 		//Just prepending client's name to message
-		char message[BUFFSIZE];
+		char message[BUFF_SIZE];
 		message[0] = '\0';
 		strcat(message, info->name);
 		strcat(message, " ");
