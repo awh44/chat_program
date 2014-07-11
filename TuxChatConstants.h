@@ -1,0 +1,5 @@
+#define BUFF_SIZE 128
+#define ME_INDICATOR -1
+#define ROLL_INDICATOR -2
+#define WHISPER_INDICATOR -4
+#define PORT_NUM 9034
