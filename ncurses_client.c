@@ -367,23 +367,30 @@ int ncurses_getline(char **output, size_t *alloced, WINDOW *in_win)
 
 void execute_command(char *username, char *input, int clientSocket, WINDOW *notification_win)
 {
+	const int WHISPER = WHISPER_INDICATOR;
+	int input_len = strlen(input);
+	if (input_len < 3)
+	{
+		wprintw(notification_win, "That is not a valid command.\n");
+	}
+
 	if (strncmp(input, "me", 2) == 0)
 	{
 		if (input[3] == '\0')
 			return;
 		
 		//username + ' ' + message
-		int message_length = strlen(username) + strlen(&input[3]) + 1;
-		char *message = (char *) malloc((message_length + 1) * sizeof(char));
+		int message_size= strlen(username) + strlen(&input[3]) + 1;
+		char *message = (char *) malloc((message_size + 1) * sizeof(char));
 		strcpy(message, username);
 		strcat(message, " ");
 		strcat(message, &input[3]);
 		strcat(message, "\n");
 
-		write(clientSocket, &message_length, sizeof(int));
-		write(clientSocket, message, message_length);
+		write(clientSocket, &message_size, sizeof(int));
+		write(clientSocket, message, message_size);
 	}
-	else if (strncmp(input, "roll", 4) == 0)
+	else if ((input_len > 5) && (strncmp(input, "roll", 4) == 0))
 	{
 		if (input[5] == '\0')
 			return;
@@ -437,9 +444,36 @@ void execute_command(char *username, char *input, int clientSocket, WINDOW *noti
 		free(rolls);
 		free(message);
 	}
-	else if (strncmp(input, "whisper", 7) == 0)
+	else if ((input_len > 8) && (strncmp(input, "whisper", 7) == 0))
 	{
-		wprintw(notification_win, "Going to do a \"whisper\" command.\n");
+		write(clientSocket, &WHISPER, sizeof(int));
+
+		char *input_copy = strdup(&input[8]);
+		char *message_contents = input_copy;
+		char *message_recipient = strsep(&message_contents, " ");
+
+		if (message_contents == NULL)
+		{
+			wprintw(notification_win, "Correct usage: /whisper [user] [message]\n");
+			wrefresh(notification_win);
+			return;
+		}
+
+		int recipient_size = strlen(message_recipient);
+		write(clientSocket, &recipient_size, sizeof(int));
+		write(clientSocket, message_recipient, recipient_size);
+
+		int message_size = strlen(username) + strlen(" whispers: ") + strlen(message_contents);
+		char *message = (char *) malloc((message_size + 1) * sizeof(char));
+		strcpy(message, username);
+		strcat(message, " whispers: ");
+		strcat(message, message_contents);
+
+		write(clientSocket, &message_size, sizeof(int));
+		write(clientSocket, message, message_size);
+
+		free(message);
+		free(input_copy);
 	}
 	wrefresh(notification_win);
 }
