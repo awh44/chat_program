@@ -219,6 +219,10 @@ int main(int argc, char *argv[])
 		{
 			print_commands(commands_str, out_window);
 		}
+		else if (strcmp(user_input, "/quit\n") == 0)
+		{
+			break;
+		}
 		else if (user_input[0] == '/')
 		{
 			execute_command(username, &user_input[1], clientSocket, out_window);
@@ -372,6 +376,8 @@ void execute_command(char *username, char *input, int clientSocket, WINDOW *noti
 	if (input_len < 3)
 	{
 		wprintw(notification_win, "That is not a valid command.\n");
+		wrefresh(notification_win);
+		return;
 	}
 
 	if (strncmp(input, "me", 2) == 0)
@@ -446,8 +452,6 @@ void execute_command(char *username, char *input, int clientSocket, WINDOW *noti
 	}
 	else if ((input_len > 8) && (strncmp(input, "whisper", 7) == 0))
 	{
-		write(clientSocket, &WHISPER, sizeof(int));
-
 		char *input_copy = strdup(&input[8]);
 		char *message_contents = input_copy;
 		char *message_recipient = strsep(&message_contents, " ");
@@ -459,14 +463,17 @@ void execute_command(char *username, char *input, int clientSocket, WINDOW *noti
 			return;
 		}
 
+		write(clientSocket, &WHISPER, sizeof(int));
+
 		int recipient_size = strlen(message_recipient);
 		write(clientSocket, &recipient_size, sizeof(int));
 		write(clientSocket, message_recipient, recipient_size);
 
-		int message_size = strlen(username) + strlen(" whispers: ") + strlen(message_contents);
+		int message_size = strlen(username) + strlen("Whisper from : ") + strlen(message_contents);
 		char *message = (char *) malloc((message_size + 1) * sizeof(char));
-		strcpy(message, username);
-		strcat(message, " whispers: ");
+		strcpy(message, "Whisper from ");
+		strcat(message, username);
+		strcat(message, ": ");
 		strcat(message, message_contents);
 
 		write(clientSocket, &message_size, sizeof(int));
@@ -475,6 +482,11 @@ void execute_command(char *username, char *input, int clientSocket, WINDOW *noti
 		free(message);
 		free(input_copy);
 	}
+	else
+	{
+		wprintw(notification_win, "That is not a valid command.\n");
+	}
+
 	wrefresh(notification_win);
 }
 

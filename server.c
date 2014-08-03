@@ -210,6 +210,14 @@ void * user_handler(void * user){
 					break;
 				}
 			}
+
+			//if user with that username doesn't exist, let the client know.
+			//To avoid adding more mutexes (thus introducing more overhead), just write to the client
+			//inside the clientListMutex, which already ensures that the client's socket isn't being
+			//written to.
+			if (node == NULL){
+				write(info->sockfd, "That user does not exist.\n", strlen("That user does not exist.\n"));	
+			}
 			pthread_mutex_unlock(&clientListMutex);
 
 
