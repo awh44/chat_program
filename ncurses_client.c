@@ -16,7 +16,9 @@
 #define SPACE_VALUE 32
 #define DEL_VALUE 127
 
-#define BASIC_ERROR 1
+
+#define NO_ERROR 0
+#define INPUT_ERROR 1
 #define CONNECTION_ERROR 2
 #define READ_ERROR 4
 #define WRITE_ERROR 8
@@ -33,54 +35,170 @@ typedef struct
 
 typedef struct
 {
-	intptr_t fd;
+	int fd;
 	WINDOW *out_window;
+	uint8_t *cont;
 } ThreadArguments;
+
+typedef struct
+{
+	WINDOW *input;
+	WINDOW *output;
+} UserWindow;
 
 void *get_messages(void *args);
 int ncurses_getline(char **output, size_t *alloced, WINDOW *in_win);
-void print_commands(char cmd_str[], WINDOW *out_win);
-void execute_command(char *username, char *input, int clientSocket, WINDOW *notification_win);
+void print_commands(WINDOW *out_win);
+void execute_command(const char const *username, const char const *input, const int clientSocket, WINDOW *notification_win);
 int get_num_digits(int i);
+
+UserWindow initializeNcurses();
+int connect_to_server(char *server, UserWindow window, int *clientSocket);
+int get_username(int clientSocket, UserWindow window, int *length, char **username);
+int create_receiving_thread(int clientSocket, UserWindow window, uint8_t *cont_var, pthread_t *msg_thread);
+int send_messages(const int clientSocket, const char const *username, const int username_length, UserWindow window);
+
+//clean up functions
+void print_error_message(int error)
+{
+	switch (error)
+	{
+		case NO_ERROR:
+			break;
+		case INPUT_ERROR:
+			printf("Please include the URL of the server you would to connect to as a command line argument.\n");
+			break;
+		case CONNECTION_ERROR:
+			printf("Error: couldn't connect to the host.\n");
+			break;
+		case READ_ERROR:
+			printf("Error: couldn't read from the server.\n");
+			break;
+		case WRITE_ERROR:
+			printf("Error: couldn't write to the server.\n");
+			break;
+		case PTHREAD_ERROR:
+			printf("Error: couldn't create a thread.\n");
+			break;
+		case OUT_OF_MEMORY_ERROR:
+			printf("Error: couldn't allocate enough memory.\n");
+			break;
+		default:
+			printf("An unknown error occured.\n");
+			break;
+	}
+}
+void clean_up_ncurses(UserWindow window);
 
 int main(int argc, char *argv[])
 {
 	if (argc < 2)
 	{
-		printf("Please include the URL of the server you would like to connect to as a command line argument.\n");
-		return BASIC_ERROR;
+		print_error_message(INPUT_ERROR);
+		return INPUT_ERROR;
 	}
 	
 	//initialize ncurses requirements---------------------------------------
+	UserWindow window = initializeNcurses();
+	//----------------------------------------------------------------------
+
+	//Set up a string which will be used by another function in the program
+	srand(time(NULL));
+	int error = 0;
+
+	//Establish the connection to the server--------------------------------
+	int clientSocket;
+	if ((error = connect_to_server(argv[1], window, &clientSocket)) != 0) 
+	{
+		clean_up_ncurses(window);
+		print_error_message(error);
+		return error;
+	}
+	//----------------------------------------------------------------------
+
+	//have the user choose a username---------------------------------------
+	char *initial_username;
+	int username_length;
+	if ((error = get_username(clientSocket, window, &username_length, &initial_username)) != 0)
+	{
+		clean_up_ncurses(window);
+		close(clientSocket);
+		print_error_message(error);
+		return error;
+	}
+
+	char username[BUFF_SIZE] = {0};
+	strncpy(username, initial_username, BUFF_SIZE - 1);
+	free(initial_username);
+	//----------------------------------------------------------------------
+
+	wprintw(window.output, "\nWelcome to the chatroom, %s! You may now begin chatting. (Type \"/cmd\" to list commands.)\n", username);
+	wrefresh(window.output);
+
+	//create the thread for receiving messages from the server--------------
+	uint8_t *thread_continue = malloc(sizeof(uint8_t));
+	*thread_continue = 1;
+	pthread_t msg_thread;
+	if ((error = create_receiving_thread(clientSocket, window, thread_continue, &msg_thread)) != 0)
+	{
+		clean_up_ncurses(window);
+		close(clientSocket);
+		print_error_message(error);
+		return error;
+	}
+	//----------------------------------------------------------------------
+
+	//get the user's messages and write them to the server------------------
+	error = send_messages(clientSocket, username, username_length, window);
+	//----------------------------------------------------------------------
+
+	//clean up--------------------------------------------------------------
+	print_error_message(error);
+	*thread_continue = 0;
+	pthread_join(msg_thread, NULL);
+	free(thread_continue);
+	clean_up_ncurses(window);
+	close(clientSocket);
+	//----------------------------------------------------------------------
+
+	return NO_ERROR;
+}
+
+UserWindow initializeNcurses()
+{
 	initscr();
 	cbreak();
 	noecho();
 
-	WINDOW *out_window = newwin(LINES - 1, COLS, 0, 0);
-	scrollok(out_window, TRUE);
-	leaveok(out_window, TRUE);
+	UserWindow window;
 
-	WINDOW *in_window = newwin(1, COLS, LINES - 1, 0);
-	scrollok(in_window, TRUE);
-	//----------------------------------------------------------------------
+	window.output = newwin(LINES - 1, COLS, 0, 0);
+	scrollok(window.output, TRUE);
+	leaveok(window.output, TRUE);
 
-	//Set up a string which will be used by another function in the program
-	char commands_str[] = "\nThe commands are:\n/roll [dice]d[number] - roll [dice] number of dice with [number] sides\n/me [action] - outputs your username as performing the action\n/whisper [username] [message] - send [message] only to user [username]\n/quit - quit the program\n\n";
-	srand(time(NULL));
-	//Establish the connection to the server--------------------------------
+	window.input = newwin(1, COLS, LINES - 1, 0);
+	scrollok(window.input, TRUE);
+
+	return window;
+}
+
+int connect_to_server(char *host, UserWindow window, int *clientSocket)
+{
+	wprintw(window.output, "Connecting to server...\n");
+	wrefresh(window.output);
+
 	struct sockaddr_in sad;
-	int clientSocket;
 	int port = PORT_NUM;
 	struct hostent *ptrh;
 
-	char host[BUFF_SIZE];
-	strcpy(host, argv[1]);
-
-	wprintw(out_window, "Connecting to server...\n");
-	wrefresh(out_window);
-
 	//set up the socket and sockaddr
-	clientSocket = socket(PF_INET, SOCK_STREAM, 0);
+	*clientSocket = socket(PF_INET, SOCK_STREAM, 0);
+
+	if (*clientSocket < 0)
+	{
+		return CONNECTION_ERROR;
+	}
+
 	memset((char *) &sad, 0, sizeof(sad));
 	sad.sin_family = AF_INET;
 	sad.sin_port = htons((u_short) port);
@@ -88,53 +206,44 @@ int main(int argc, char *argv[])
 	memcpy(&sad.sin_addr, (*ptrh).h_addr, (*ptrh).h_length);
 	//-------------------------------
 
-	if (connect(clientSocket, (struct sockaddr *) &sad, sizeof(sad)) < 0)
+	if (connect(*clientSocket, (struct sockaddr *) &sad, sizeof(sad)) < 0)
 	{
-		delwin(out_window);
-		delwin(in_window);
-		endwin();
-		printf("Error: couldn't connect to host\n");
 		return CONNECTION_ERROR;
 	}
 
-	wprintw(out_window, "Successfully connected to server.\n\n");
-	wrefresh(out_window);
-	//----------------------------------------------------------------------
+	wprintw(window.output, "Successfully connected to server.\n");
+	wrefresh(window.output);
 
-	//have the user choose a username---------------------------------------
-	wprintw(out_window, "What would you like your username to be? (Less than %d characters)\n", BUFF_SIZE);
-	wrefresh(out_window);
+	return NO_ERROR;
+}
+
+int get_username(int clientSocket, UserWindow window, int *length, char **username)
+{
+	wprintw(window.output, "What would you like your username to be? (Less than %d characters)\n", BUFF_SIZE);
+	wrefresh(window.output);
 	char *user_input = NULL;
 	size_t size = 0;
-	int chars_read = ncurses_getline(&user_input, &size, out_window);
+	int chars_read = ncurses_getline(&user_input, &size, window.output);
 
 	if (user_input == NULL)
 	{
-		delwin(out_window);
-		delwin(in_window);
-		endwin();
-		printf("Error: could not allocate enough memory.\n");
-		close(clientSocket);
 		return OUT_OF_MEMORY_ERROR;
 	}
 
+	*length = MIN(chars_read, BUFF_SIZE);
 	//get rid of the newline, or make sure the string will
 	//null terminate when placed into a buffer on the server
-	user_input[MIN(chars_read, BUFF_SIZE) - 1] = '\0';
+	user_input[*length - 1] = '\0';
 	//send the desired username to the server; either write
 	//all of the characters read or keep it to the maximum
 	//username size
-	write(clientSocket, user_input, MIN(chars_read, BUFF_SIZE));
+	write(clientSocket, user_input, *length);
 	
 	//read from the server to determine its response
-	char from_server;
+	char from_server ='s';
 	if (read(clientSocket, &from_server, 1) < 0)
 	{
-		delwin(out_window);
-		delwin(in_window);
-		endwin();
-		printf("Error in reading from the server.\n");
-		close(clientSocket);
+		free(user_input);
 		return READ_ERROR;
 	}
 
@@ -142,82 +251,64 @@ int main(int argc, char *argv[])
 	//have the user try another
 	while (from_server == 't')
 	{
-		wprintw(out_window, "Sorry, that username is already taken. Please try another.\n");
-		wrefresh(out_window);
-		chars_read = ncurses_getline(&user_input, &size, out_window);
+		wprintw(window.output, "Sorry, that username is already taken. Please try another.\n");
+		wrefresh(window.output);
+		chars_read = ncurses_getline(&user_input, &size, window.output);
 		if (user_input == NULL)
 		{
-			delwin(out_window);
-			delwin(in_window);
-			endwin();
-			printf("Error: could not allocate enough memory.\n");
-			close(clientSocket);
+			free(user_input);
 			return OUT_OF_MEMORY_ERROR;
 		}
-		user_input[MIN(chars_read, BUFF_SIZE) - 1] = '\0';
 
-		write(clientSocket, user_input, MIN(chars_read, BUFF_SIZE));
+		*length = MIN(chars_read, BUFF_SIZE);
+
+		user_input[*length - 1] = '\0';
+
+		write(clientSocket, user_input, *length);
 		if (read(clientSocket, &from_server, 1) < 0)
 		{
-			delwin(out_window);
-			delwin(in_window);
-			endwin();
-			printf("Error in reading from the server.\n");
-			close(clientSocket);
 			return READ_ERROR;
 		}
 	}
-	char username[BUFF_SIZE] = {0};
-	strncpy(username, user_input, BUFF_SIZE - 1);
-	const int USERNAME_LENGTH = strlen(username);
-	//----------------------------------------------------------------------
 
-	wprintw(out_window, "\nWelcome to the chatroom, %s! You may now begin chatting. (Type \"/cmd\" to list commands.)\n", username);
-	wrefresh(out_window);
+	*username = user_input;
+	return NO_ERROR;	
+}
 
-	//create the thread for receiving messages from the server--------------
-	ThreadArguments args;
-	args.fd = clientSocket;
-	args.out_window = out_window;
-	pthread_t msg_thread;
-	if (pthread_create(&msg_thread, NULL, get_messages, &args))
+int create_receiving_thread(int clientSocket, UserWindow window, uint8_t *cont_var, pthread_t *msg_thread)
+{
+	ThreadArguments *args = malloc(sizeof(ThreadArguments));
+	args->fd = clientSocket;
+	args->out_window = window.output;
+	args->cont = cont_var;
+	if (pthread_create(msg_thread, NULL, get_messages, args))
 	{
-		delwin(out_window);
-		delwin(in_window);
-		endwin();
-		printf("Error: could not create pthread.\n");
-		free(user_input);
-		int tmp = strlen("/quit\n");
-		write(clientSocket, &tmp, sizeof(int));
-		write(clientSocket, "/quit\n", tmp);
-		close(clientSocket);
 		return PTHREAD_ERROR;
 	}
-	//thread isn't joined because it *should* terminate when main finishes
-	//----------------------------------------------------------------------
 
-	//get the user's messages and write them to the server------------------
+	return NO_ERROR;
+}
+
+int send_messages(const int clientSocket, const char const *username, const int username_length, UserWindow window)
+{
+	char *user_input = NULL;
+	size_t size = 0;
+	int chars_read = 0;
+
 	do
 	{
 		//read the user's input, store the number of characters read
-		chars_read = ncurses_getline(&user_input, &size, in_window);
+		chars_read = ncurses_getline(&user_input, &size, window.input);
 
 		if (user_input == NULL)
 		{
-			pthread_kill(msg_thread);
-			delwin(in_window);
-			delwin(out_window);
-			endwin();
-			printf("Error: couldn't allocate enough memory.\n");
-			pthread_kill(msg_thread);
-			close(clientSocket);
 			return OUT_OF_MEMORY_ERROR;	
 		}
 
 		//determine if they want the commands printed
 		if (strcmp(user_input, "/cmd\n") == 0)
 		{
-			print_commands(commands_str, out_window);
+			print_commands(window.output);
 		}
 		else if (strcmp(user_input, "/quit\n") == 0)
 		{
@@ -225,14 +316,14 @@ int main(int argc, char *argv[])
 		}
 		else if (user_input[0] == '/')
 		{
-			execute_command(username, &user_input[1], clientSocket, out_window);
+			execute_command(username, &user_input[1], clientSocket, window.output);
 		}
 		else
 		{
 			//if not, write the user's input to the server; note that, because
 			//getline is used, it includes the trailing '\n'
 			//first inform the server how long the message will be...
-			int to_send = chars_read + USERNAME_LENGTH + strlen(": ");
+			int to_send = chars_read + username_length + strlen(": ");
 			char *message = (char *) malloc((to_send + 1) * sizeof(char));
 			strcpy(message, username);
 			strcat(message, ": ");
@@ -244,45 +335,40 @@ int main(int argc, char *argv[])
 			free(message);
 		}
 	} while (strcmp(user_input, "/quit\n") != 0);
-	//----------------------------------------------------------------------
 
-	//clean up--------------------------------------------------------------
 	free(user_input);
-	//make sure to kill the thread before closing socket so that this thread
-	//isn't switched out for the other and data read from the server
-	pthread_kill(msg_thread);
-	delwin(out_window);
-	delwin(in_window);
-	close(clientSocket);
-	endwin(); //end ncurses
-	//----------------------------------------------------------------------
 
-	return 0;
+	return NO_ERROR;
 }
 
 void *get_messages(void *args)
 {
-	//get the value of the shared file descriptor for the clientSocker
+	//get the value of the shared file descriptor for the clientSocket
+	//the output window, and the shared flag indicating the thread should continue
 	ThreadArguments *args_p = (ThreadArguments *) args;
 	int clientSocket = args_p->fd;
 	WINDOW *out_win = args_p->out_window;
+	uint8_t *cont = args_p->cont;
+	free(args_p);
 
 	//continuously read from the server and print out what is received;
 	//because TCP is being used, it is assured that that all data will be
 	//received in the correct order; because no formatting is done, data is
 	//only read and then printed it, it does not matter how many bytes are
 	//read on each iteration, just that they are printed
-	while (1)
+	while (*cont)
 	{
 		char from_server[BUFF_SIZE + 1];
-		int bytes_read = read(clientSocket, from_server, BUFF_SIZE);
+		int bytes_read = recv(clientSocket, from_server, BUFF_SIZE, MSG_DONTWAIT);
 		if (bytes_read >= 0)
 		{
 			from_server[bytes_read] = '\0';
+			wprintw(out_win, "%s", from_server);
+			wrefresh(out_win);
 		}
-		wprintw(out_win, "%s", from_server);
-		wrefresh(out_win);
 	}
+
+	pthread_exit(0);
 }
 
 //Returns the number of characters read, including the newline
@@ -369,7 +455,7 @@ int ncurses_getline(char **output, size_t *alloced, WINDOW *in_win)
 	return needed_size - 1;
 }
 
-void execute_command(char *username, char *input, int clientSocket, WINDOW *notification_win)
+void execute_command(const char const *username, const char const *input, const int clientSocket, WINDOW *notification_win)
 {
 	const int WHISPER = WHISPER_INDICATOR;
 	int input_len = strlen(input);
@@ -385,16 +471,17 @@ void execute_command(char *username, char *input, int clientSocket, WINDOW *noti
 		if (input[3] == '\0')
 			return;
 		
-		//username + ' ' + message
+		//username + ' ' + message ('\n' is implicitly included in the message)
 		int message_size= strlen(username) + strlen(&input[3]) + 1;
 		char *message = (char *) malloc((message_size + 1) * sizeof(char));
 		strcpy(message, username);
 		strcat(message, " ");
 		strcat(message, &input[3]);
-		strcat(message, "\n");
 
 		write(clientSocket, &message_size, sizeof(int));
 		write(clientSocket, message, message_size);
+
+		free(message);
 	}
 	else if ((input_len > 5) && (strncmp(input, "roll", 4) == 0))
 	{
@@ -406,6 +493,7 @@ void execute_command(char *username, char *input, int clientSocket, WINDOW *noti
 		char *s_num_dice = strsep(&s_num_sides, "d");
 		if (s_num_sides == NULL)
 		{
+			free(dice_info);
 			wprintw(notification_win, "Correct usage of roll command: /roll [dice]d[sides]\n");
 			wrefresh(notification_win);
 			return;
@@ -415,6 +503,7 @@ void execute_command(char *username, char *input, int clientSocket, WINDOW *noti
 		int num_sides = atoi(s_num_sides);
 		if ((num_dice <= 0) || (num_sides <= 0))
 		{
+			free(dice_info);
 			wprintw(notification_win, "Correct usage of roll command: /roll [dice]d[sides]\n");
 			wrefresh(notification_win);
 			return;
@@ -442,7 +531,7 @@ void execute_command(char *username, char *input, int clientSocket, WINDOW *noti
 		}
 		sprintf(message, "%sTotal: %d\n", message, total);
 
-		message_size -= 1;
+		message_size--;
 		write(clientSocket, &message_size, sizeof(int));
 		write(clientSocket, message, message_size);
 
@@ -458,6 +547,7 @@ void execute_command(char *username, char *input, int clientSocket, WINDOW *noti
 
 		if (message_contents == NULL)
 		{
+			free(input_copy);
 			wprintw(notification_win, "Correct usage: /whisper [user] [message]\n");
 			wrefresh(notification_win);
 			return;
@@ -490,9 +580,9 @@ void execute_command(char *username, char *input, int clientSocket, WINDOW *noti
 	wrefresh(notification_win);
 }
 
-void print_commands(char cmd_str[], WINDOW *out_win)
+void print_commands(WINDOW *out_win)
 {
-	wprintw(out_win, "%s", cmd_str);
+	wprintw(out_win, "\nThe commands are:\n/roll [dice]d[number] - roll [dice] number of dice with [number] sides\n/me [action] - outputs your username as performing the action\n/whisper [username] [message] - send [message] only to user [username]\n/quit - quit the program\n\n");
 	wrefresh(out_win);
 }
 
@@ -504,4 +594,11 @@ int get_num_digits(int i)
 		length++;
 	}
 	return length;
+}
+
+void clean_up_ncurses(UserWindow window)
+{
+	delwin(window.output);
+	delwin(window.input);
+	endwin();
 }
