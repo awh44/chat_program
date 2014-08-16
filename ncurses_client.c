@@ -46,49 +46,24 @@ typedef struct
 	WINDOW *output;
 } UserWindow;
 
-void *get_messages(void *args);
-int ncurses_getline(char **output, size_t *alloced, WINDOW *in_win);
-void print_commands(WINDOW *out_win);
-void execute_command(const char const *username, const char const *input, const int clientSocket, WINDOW *notification_win);
-int get_num_digits(int i);
 
+//main functions
 UserWindow initializeNcurses();
 int connect_to_server(char *server, UserWindow window, int *clientSocket);
 int get_username(int clientSocket, UserWindow window, int *length, char **username);
 int create_receiving_thread(int clientSocket, UserWindow window, uint8_t *cont_var, pthread_t *msg_thread);
+void *get_messages(void *args);
 int send_messages(const int clientSocket, const char const *username, const int username_length, UserWindow window);
+void execute_command(const char const *username, const char const *input, const int clientSocket, WINDOW *notification_win);
+void print_commands(WINDOW *out_win);
 
-//clean up functions
-void print_error_message(int error)
-{
-	switch (error)
-	{
-		case NO_ERROR:
-			break;
-		case INPUT_ERROR:
-			printf("Please include the URL of the server you would to connect to as a command line argument.\n");
-			break;
-		case CONNECTION_ERROR:
-			printf("Error: couldn't connect to the host.\n");
-			break;
-		case READ_ERROR:
-			printf("Error: couldn't read from the server.\n");
-			break;
-		case WRITE_ERROR:
-			printf("Error: couldn't write to the server.\n");
-			break;
-		case PTHREAD_ERROR:
-			printf("Error: couldn't create a thread.\n");
-			break;
-		case OUT_OF_MEMORY_ERROR:
-			printf("Error: couldn't allocate enough memory.\n");
-			break;
-		default:
-			printf("An unknown error occured.\n");
-			break;
-	}
-}
+//clean up and helper functions
 void clean_up_ncurses(UserWindow window);
+void print_error_message(int error);
+int get_num_digits(int i);
+
+//logistical function
+int ncurses_getline(char **output, size_t *alloced, WINDOW *in_win);
 
 int main(int argc, char *argv[])
 {
@@ -289,6 +264,36 @@ int create_receiving_thread(int clientSocket, UserWindow window, uint8_t *cont_v
 	return NO_ERROR;
 }
 
+void *get_messages(void *args)
+{
+	//get the value of the shared file descriptor for the clientSocket
+	//the output window, and the shared flag indicating the thread should continue
+	ThreadArguments *args_p = (ThreadArguments *) args;
+	int clientSocket = args_p->fd;
+	WINDOW *out_win = args_p->out_window;
+	uint8_t *cont = args_p->cont;
+	free(args_p);
+
+	//continuously read from the server and print out what is received;
+	//because TCP is being used, it is assured that that all data will be
+	//received in the correct order; because no formatting is done, data is
+	//only read and then printed it, it does not matter how many bytes are
+	//read on each iteration, just that they are printed
+	while (*cont)
+	{
+		char from_server[BUFF_SIZE + 1];
+		int bytes_read = recv(clientSocket, from_server, BUFF_SIZE, MSG_DONTWAIT);
+		if (bytes_read >= 0)
+		{
+			from_server[bytes_read] = '\0';
+			wprintw(out_win, "%s", from_server);
+			wrefresh(out_win);
+		}
+	}
+	pthread_exit(0);
+}
+
+
 int send_messages(const int clientSocket, const char const *username, const int username_length, UserWindow window)
 {
 	char *user_input = NULL;
@@ -339,120 +344,6 @@ int send_messages(const int clientSocket, const char const *username, const int 
 	free(user_input);
 
 	return NO_ERROR;
-}
-
-void *get_messages(void *args)
-{
-	//get the value of the shared file descriptor for the clientSocket
-	//the output window, and the shared flag indicating the thread should continue
-	ThreadArguments *args_p = (ThreadArguments *) args;
-	int clientSocket = args_p->fd;
-	WINDOW *out_win = args_p->out_window;
-	uint8_t *cont = args_p->cont;
-	free(args_p);
-
-	//continuously read from the server and print out what is received;
-	//because TCP is being used, it is assured that that all data will be
-	//received in the correct order; because no formatting is done, data is
-	//only read and then printed it, it does not matter how many bytes are
-	//read on each iteration, just that they are printed
-	while (*cont)
-	{
-		char from_server[BUFF_SIZE + 1];
-		int bytes_read = recv(clientSocket, from_server, BUFF_SIZE, MSG_DONTWAIT);
-		if (bytes_read >= 0)
-		{
-			from_server[bytes_read] = '\0';
-			wprintw(out_win, "%s", from_server);
-			wrefresh(out_win);
-		}
-	}
-
-	pthread_exit(0);
-}
-
-//Returns the number of characters read, including the newline
-//but ignoring the null terminator. Could potentially changed
-//the passed *output pointer by reallocing. Sets *output to
-//NULL on out of memory errors, after freeing. Note that this
-//means there will be no way to recover information from
-//user input upon out of memory errors. Note that the number
-//of characters read before running out of memory will always
-//be returned though
-int ncurses_getline(char **output, size_t *alloced, WINDOW *in_win)
-{
-	int alloc_size = *alloced;
-
-	//if output == NULL, ignore the claimed *alloced size
-	if (NULL == *output)
-	{
-		alloc_size = BUFF_SIZE;
-		*output = malloc(alloc_size * sizeof(char));
-		if (NULL == *output)
-		{
-			*alloced = 0;
-			return 0;
-		}
-	}
-	else if (alloc_size == 1)
-	{
-		//if the alloc_size is only 1, there's not enough room for the
-		//required '\0' and '\n', so realloc to at least a size of two
-		alloc_size++;
-		*output = realloc(*output, alloc_size * sizeof(char));
-	}
-	
-	int needed_size = 2; //one for '\n' and one for '\0'
-
-	char input;
-	while ((input = wgetch(in_win)) != '\n')
-	{
-		if ((input == BACKSPACE) || (input == DEL_VALUE))
-		{
-			if (needed_size > 2)
-			{
-				needed_size--;
-				int x, y;
-				getyx(in_win, y, x);
-				mvwdelch(in_win, y, x - 1);
-			}
-		}
-		else if ((input >= SPACE_VALUE) && (input < DEL_VALUE))
-		{
-			//after determing the input is a regular character, continue
-			needed_size++;
-			//realloc by factor of two if more size needed to prevent
-			//fragmentation, if possible; because needed_size is incremented
-			//at most by 1 every iteration, it is safe to only realloc once,
-			//i.e., needed_size will never be more than twice as big as
-			//alloc_size
-			if (needed_size > alloc_size)
-			{
-				alloc_size *= 2;
-				char *tmp = realloc(*output, alloc_size * sizeof(char));
-				if (NULL == tmp)
-				{
-					free(*output);
-					*alloced = 0;
-					return needed_size - 1;
-				}
-				*output = tmp;
-			}
-			(*output)[needed_size - 3] = input;
-			wprintw(in_win, "%c", input);
-		}
-		wrefresh(in_win);
-	}
-
-	(*output)[needed_size - 2] = '\n';
-	(*output)[needed_size - 1] = '\0';
-
-	wprintw(in_win, "\n");
-	wrefresh(in_win);
-
-	*alloced = alloc_size;
-	//subtract one for the null terminator
-	return needed_size - 1;
 }
 
 void execute_command(const char const *username, const char const *input, const int clientSocket, WINDOW *notification_win)
@@ -586,6 +477,43 @@ void print_commands(WINDOW *out_win)
 	wrefresh(out_win);
 }
 
+void clean_up_ncurses(UserWindow window)
+{
+	delwin(window.output);
+	delwin(window.input);
+	endwin();
+}
+
+void print_error_message(int error)
+{
+	switch (error)
+	{
+		case NO_ERROR:
+			break;
+		case INPUT_ERROR:
+			printf("Please include the URL of the server you would to connect to as a command line argument.\n");
+			break;
+		case CONNECTION_ERROR:
+			printf("Error: couldn't connect to the host.\n");
+			break;
+		case READ_ERROR:
+			printf("Error: couldn't read from the server.\n");
+			break;
+		case WRITE_ERROR:
+			printf("Error: couldn't write to the server.\n");
+			break;
+		case PTHREAD_ERROR:
+			printf("Error: couldn't create a thread.\n");
+			break;
+		case OUT_OF_MEMORY_ERROR:
+			printf("Error: couldn't allocate enough memory.\n");
+			break;
+		default:
+			printf("An unknown error occured.\n");
+			break;
+	}
+}
+
 int get_num_digits(int i)
 {
 	int length = 1;
@@ -596,9 +524,87 @@ int get_num_digits(int i)
 	return length;
 }
 
-void clean_up_ncurses(UserWindow window)
+//Returns the number of characters read, including the newline
+//but ignoring the null terminator. Could potentially changed
+//the passed *output pointer by reallocing. Sets *output to
+//NULL on out of memory errors, after freeing. Note that this
+//means there will be no way to recover information from
+//user input upon out of memory errors. Note that the number
+//of characters read before running out of memory will always
+//be returned though
+int ncurses_getline(char **output, size_t *alloced, WINDOW *in_win)
 {
-	delwin(window.output);
-	delwin(window.input);
-	endwin();
+	int alloc_size = *alloced;
+
+	//if output == NULL, ignore the claimed *alloced size
+	if (NULL == *output)
+	{
+		alloc_size = BUFF_SIZE;
+		*output = malloc(alloc_size * sizeof(char));
+		if (NULL == *output)
+		{
+			*alloced = 0;
+			return 0;
+		}
+	}
+	else if (alloc_size == 1)
+	{
+		//if the alloc_size is only 1, there's not enough room for the
+		//required '\0' and '\n', so realloc to at least a size of two
+		alloc_size++;
+		*output = realloc(*output, alloc_size * sizeof(char));
+	}
+	
+	int needed_size = 2; //one for '\n' and one for '\0'
+
+	char input;
+	while ((input = wgetch(in_win)) != '\n')
+	{
+		if ((input == BACKSPACE) || (input == DEL_VALUE))
+		{
+			if (needed_size > 2)
+			{
+				needed_size--;
+				int x, y;
+				getyx(in_win, y, x);
+				mvwdelch(in_win, y, x - 1);
+			}
+		}
+		else if ((input >= SPACE_VALUE) && (input < DEL_VALUE))
+		{
+			//after determing the input is a regular character, continue
+			needed_size++;
+			//realloc by factor of two if more size needed to prevent
+			//fragmentation, if possible; because needed_size is incremented
+			//at most by 1 every iteration, it is safe to only realloc once,
+			//i.e., needed_size will never be more than twice as big as
+			//alloc_size
+			if (needed_size > alloc_size)
+			{
+				alloc_size *= 2;
+				char *tmp = realloc(*output, alloc_size * sizeof(char));
+				if (NULL == tmp)
+				{
+					free(*output);
+					*alloced = 0;
+					return needed_size - 1;
+				}
+				*output = tmp;
+			}
+			(*output)[needed_size - 3] = input;
+			wprintw(in_win, "%c", input);
+		}
+		wrefresh(in_win);
+	}
+
+	(*output)[needed_size - 2] = '\n';
+	(*output)[needed_size - 1] = '\0';
+
+	wprintw(in_win, "\n");
+	wrefresh(in_win);
+
+	*alloced = alloc_size;
+	//subtract one for the null terminator
+	return needed_size - 1;
 }
+
