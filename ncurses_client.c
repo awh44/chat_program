@@ -79,11 +79,11 @@ int main(int argc, char *argv[])
 
 	//Set up a string which will be used by another function in the program
 	srand(time(NULL));
-	int error = 0;
+	int error = NO_ERROR;
 
 	//Establish the connection to the server--------------------------------
 	int clientSocket;
-	if ((error = connect_to_server(argv[1], window, &clientSocket)) != 0) 
+	if ((error = connect_to_server(argv[1], window, &clientSocket)) != NO_ERROR) 
 	{
 		clean_up_ncurses(window);
 		print_error_message(error);
@@ -94,7 +94,7 @@ int main(int argc, char *argv[])
 	//have the user choose a username---------------------------------------
 	char *initial_username;
 	int username_length;
-	if ((error = get_username(clientSocket, window, &username_length, &initial_username)) != 0)
+	if ((error = get_username(clientSocket, window, &username_length, &initial_username)) != NO_ERROR)
 	{
 		clean_up_ncurses(window);
 		close(clientSocket);
@@ -114,7 +114,7 @@ int main(int argc, char *argv[])
 	uint8_t *thread_continue = malloc(sizeof(uint8_t));
 	*thread_continue = 1;
 	pthread_t msg_thread;
-	if ((error = create_receiving_thread(clientSocket, window, thread_continue, &msg_thread)) != 0)
+	if ((error = create_receiving_thread(clientSocket, window, thread_continue, &msg_thread)) != NO_ERROR)
 	{
 		clean_up_ncurses(window);
 		close(clientSocket);
