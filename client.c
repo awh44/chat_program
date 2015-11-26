@@ -128,7 +128,7 @@ int main(int argc, char *argv[])
 	//----------------------------------------------------------------------
 
 	//get the user's messages and write them to the server------------------
-	error = send_messages(clientSocket, username, username_length)
+	error = send_messages(clientSocket, username, username_length);
 	//----------------------------------------------------------------------
 
 	//clean up--------------------------------------------------------------
